@@ -4,22 +4,17 @@
 //! - 事件类型由环境变量 `CLAUDE_HOOK_EVENT` 传入；
 //! - 事件内容从 stdin 读入（JSON，原样作为 payload）；
 //! - 包装 `{ received_at, hook_event, payload }` 后追加写入按会话分文件的 JSONL；
-//! - 按小时轮转文件名，并在文件总数 > 50 时清理至最新 20 个。
+//! - 每个会话一个文件（`event-<session_id>.jsonl`），统一写入 `~/.ccbuddy/events/`。
 //!
 //! 设计约束：极简、只做写入、任何错误都不影响 Claude Code 主流程（退出码 0）。
 
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use chrono::Utc;
 use serde_json::{json, Value};
-
-/// 日志文件数超过该值时触发清理。
-const MAX_FILES: usize = 50;
-/// 清理后保留的最新文件数。
-const KEEP_FILES: usize = 20;
 
 fn main() {
     // 1. 读取 stdin 全部内容作为 payload
@@ -60,13 +55,13 @@ fn main() {
         "payload": payload,
     });
 
-    // 5. 追加写入按会话 + 小时命名的日志文件
+    // 5. 追加写入按会话命名的日志文件
     let dir = events_dir();
     if fs::create_dir_all(&dir).is_err() {
         eprintln!("ccbuddy-hook: failed to create dir {}", dir.display());
         std::process::exit(0);
     }
-    let filename = format!("events-{}-{}.jsonl", session_id, now.format("%Y-%m-%d-%H"));
+    let filename = format!("event-{}.jsonl", session_id);
     let path = dir.join(filename);
 
     let mut file = match OpenOptions::new().create(true).append(true).open(&path) {
@@ -79,47 +74,13 @@ fn main() {
 
     if writeln!(file, "{}", entry).is_err() || file.flush().is_err() {
         eprintln!("ccbuddy-hook: failed to write {}", path.display());
-        std::process::exit(0);
     }
-
-    // 6. 全局清理：文件数 > MAX_FILES 时删除最旧的，仅保留最新 KEEP_FILES 个
-    cleanup(&dir);
 }
 
-/// 日志源目录：`~/.claude/data/events`。
+/// 日志源目录：`~/.ccbuddy/events`。
 fn events_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".claude")
-        .join("data")
+        .join(".ccbuddy")
         .join("events")
-}
-
-/// 收集 `events-*.jsonl` 文件并按文件名排序（文件名含 UTC 时间戳，字典序即时间序）。
-fn list_log_files(dir: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = fs::read_dir(dir)
-        .map(|rd| {
-            rd.flatten()
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.file_name()
-                        .map(|n| n.to_string_lossy().starts_with("events-"))
-                        .unwrap_or(false)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    files.sort();
-    files
-}
-
-fn cleanup(dir: &Path) {
-    let files = list_log_files(dir);
-    if files.len() <= MAX_FILES {
-        return;
-    }
-    let remove_count = files.len() - KEEP_FILES;
-    for f in files.iter().take(remove_count) {
-        let _ = fs::remove_file(f);
-    }
 }

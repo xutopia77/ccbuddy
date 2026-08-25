@@ -4,13 +4,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const eventsDir = join(homedir(), ".claude", "data", "events");
+const eventsDir = join(homedir(), ".ccbuddy", "events");
 mkdirSync(eventsDir, { recursive: true });
 
 const now = Date.now();
 const iso = (offsetMs) => new Date(now - offsetMs).toISOString();
-// 文件名时间戳：YYYY-MM-DD-HH
-const hour = new Date(now).toISOString().slice(0, 13).replace("T", "-");
 
 const MIN = 60 * 1000;
 
@@ -82,7 +80,7 @@ const sessions = [
 ];
 
 for (const s of sessions) {
-  const filename = `events-${s.id}-${hour}.jsonl`;
+  const filename = `event-${s.id}.jsonl`;
   writeFileSync(join(eventsDir, filename), s.lines.join("\n") + "\n", "utf8");
   console.log(`已生成 ${filename}（${s.lines.length} 行）`);
 }

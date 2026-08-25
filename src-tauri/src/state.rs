@@ -265,6 +265,15 @@ fn is_system_marker(s: &str) -> bool {
         "<system-",
         "<output-",
         "<session-",
+        "<bash-",
+        "<tool-",
+        "<result-",
+        "<overview-",
+        "<rewrite-",
+        "<progress-",
+        "<summary-",
+        "<file-",
+        "<thinking",
     ]
     .iter()
     .any(|p| t.starts_with(p))
@@ -279,32 +288,23 @@ fn short_time(iso: &str) -> String {
         .unwrap_or_else(|| iso.to_string())
 }
 
-/// 日志源目录：`~/.claude/data/events`（设计文档约定，不提供配置项）。
+/// 日志源目录：`~/.ccbuddy/events`（设计文档约定，不提供配置项）。
 pub fn events_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".claude")
-        .join("data")
+        .join(".ccbuddy")
         .join("events")
 }
 
-/// 从文件名 `events-<session_id>-<YYYY-MM-DD-HH>.jsonl` 提取 session_id。
+/// 从文件名 `event-<session_id>.jsonl` 提取 session_id。
 fn session_id_from_filename(path: &Path) -> String {
-    let name = path
-        .file_name()
+    path.file_name()
         .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let stem = name
-        .strip_prefix("events-")
-        .unwrap_or(&name)
-        .trim_end_matches(".jsonl");
-    // 从右侧去掉时间戳的 4 段（YYYY-MM-DD-HH），剩余为 session_id。
-    let parts: Vec<&str> = stem.rsplitn(5, '-').collect();
-    if parts.len() == 5 {
-        parts[4].to_string()
-    } else {
-        stem.to_string()
-    }
+        .unwrap_or_default()
+        .strip_prefix("event-")
+        .unwrap_or_default()
+        .trim_end_matches(".jsonl")
+        .to_string()
 }
 
 /// 扫描默认日志目录 + 原生历史会话目录，聚合为会话列表。
@@ -334,13 +334,12 @@ fn load_sessions_from(dir: &Path) -> Vec<SessionInfo> {
             .map(|e| e.path())
             .filter(|p| {
                 p.file_name()
-                    .map(|n| n.to_string_lossy().starts_with("events-"))
+                    .map(|n| n.to_string_lossy().starts_with("event-"))
                     .unwrap_or(false)
             })
             .collect(),
         Err(_) => return Vec::new(),
     };
-    // 文件名含 UTC 时间戳，字典序即时间序。
     files.sort();
 
     let mut sessions: HashMap<String, SessionAgg> = HashMap::new();
@@ -438,46 +437,17 @@ fn parse_native_session(path: &Path) -> Option<SessionInfo> {
                     custom_title = ct.to_string();
                 }
             }
-            "user" => {
-                // 跳过系统注入的元数据消息（local-command-caveat 等）
-                if v.get("isMeta").and_then(|x| x.as_bool()) == Some(true) {
-                    continue;
-                }
-                if let Some(text) = extract_content_text(v.get("message")) {
-                    if !is_system_marker(&text) {
-                        if title.is_empty() {
-                            title = truncate(&text, 30);
-                        }
-                        preview = truncate(&text, 60);
-                        messages.push(Message {
-                            msg_type: "user",
-                            role: "user",
-                            content: text,
-                            time: short_time(&last_activity),
-                            tool_call: None,
-                        });
+            "user" => parse_user_line(&v, &last_activity, &mut title, &mut preview, &mut messages),
+            "assistant" => parse_assistant_line(&v, &last_activity, &mut preview, &mut messages),
+            "system" => {
+                if let Some(c) = v.get("content") {
+                    if let Some(text) = content_to_text(c) {
+                        messages.push(raw_message("system", "system", &text, &last_activity, None));
                     }
-                }
-            }
-            "assistant" => {
-                if let Some(text) = extract_content_text(v.get("message")) {
-                    preview = truncate(&text, 60);
-                    messages.push(Message {
-                        msg_type: "assistant",
-                        role: "assistant",
-                        content: text,
-                        time: short_time(&last_activity),
-                        tool_call: None,
-                    });
                 }
             }
             _ => {}
         }
-    }
-
-    // 历史会话消息只保留最近 30 条，避免前端渲染过重
-    if messages.len() > 30 {
-        messages = messages.split_off(messages.len() - 30);
     }
 
     Some(SessionInfo {
@@ -504,28 +474,190 @@ fn parse_native_session(path: &Path) -> Option<SessionInfo> {
     })
 }
 
-/// 从 Claude Code 原生 message 对象提取文本内容（content 可能是字符串或块数组）。
-fn extract_content_text(msg: Option<&serde_json::Value>) -> Option<String> {
-    let content = msg?.get("content")?;
+/// 组装一条历史消息。
+fn raw_message(
+    msg_type: &'static str,
+    role: &'static str,
+    content: &str,
+    time: &str,
+    tool_call: Option<String>,
+) -> Message {
+    Message {
+        msg_type,
+        role,
+        content: content.to_string(),
+        time: short_time(time),
+        tool_call,
+    }
+}
+
+/// 解析原生 transcript 中的 `user` 行：
+/// - 字符串 content 为真实用户输入；系统注入的命令回显归为 system；
+/// - 块数组 content 中的 `tool_result` 为工具执行结果、`text` 为用户文本。
+fn parse_user_line(
+    v: &serde_json::Value,
+    time: &str,
+    title: &mut String,
+    preview: &mut String,
+    messages: &mut Vec<Message>,
+) {
+    let Some(msg) = v.get("message") else { return };
+    let Some(content) = msg.get("content") else { return };
+
+    match content {
+        serde_json::Value::String(s) => {
+            let is_marker = is_system_marker(s);
+            if title.is_empty() && !is_marker {
+                *title = truncate(s, 40);
+            }
+            *preview = truncate(s, 80);
+            messages.push(raw_message(
+                if is_marker { "system" } else { "user" },
+                if is_marker { "system" } else { "user" },
+                s,
+                time,
+                None,
+            ));
+        }
+        serde_json::Value::Array(blocks) => {
+            for block in blocks {
+                match block.get("type").and_then(|x| x.as_str()) {
+                    Some("tool_result") => {
+                        if let Some(c) = block.get("content") {
+                            if let Some(text) = content_to_text(c) {
+                                *preview = truncate(&text, 80);
+                                messages.push(raw_message("tool_result", "assistant", &text, time, None));
+                            }
+                        }
+                    }
+                    Some("text") => {
+                        if let Some(text) = block_text(block) {
+                            if title.is_empty() {
+                                *title = truncate(&text, 40);
+                            }
+                            *preview = truncate(&text, 80);
+                            messages.push(raw_message("user", "user", &text, time, None));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 解析原生 transcript 中的 `assistant` 行，忠实保留每个内容块：
+/// - `text` 块 → assistant 文本；
+/// - `thinking` 块 → 思考过程（thinking 类型）；
+/// - `tool_use` 块 → 工具调用（带 toolCall 徽标与入参）；
+/// - `tool_result` 块 → 工具结果。
+fn parse_assistant_line(
+    v: &serde_json::Value,
+    time: &str,
+    preview: &mut String,
+    messages: &mut Vec<Message>,
+) {
+    let Some(msg) = v.get("message") else { return };
+    let Some(content) = msg.get("content") else { return };
+
+    match content {
+        serde_json::Value::String(s) => {
+            *preview = truncate(s, 80);
+            messages.push(raw_message("assistant", "assistant", s, time, None));
+        }
+        serde_json::Value::Array(blocks) => {
+            for block in blocks {
+                match block.get("type").and_then(|x| x.as_str()) {
+                    Some("text") => {
+                        if let Some(t) = block.get("text").and_then(|x| x.as_str()) {
+                            *preview = truncate(t, 80);
+                            messages.push(raw_message("assistant", "assistant", t, time, None));
+                        }
+                    }
+                    Some("thinking") => {
+                        if let Some(t) = block.get("thinking").and_then(|x| x.as_str()) {
+                            messages.push(raw_message("thinking", "assistant", t, time, None));
+                        }
+                    }
+                    Some("tool_use") => {
+                        let name = block
+                            .get("name")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("工具")
+                            .to_string();
+                        let input = block
+                            .get("input")
+                            .map(|i| i.to_string())
+                            .filter(|s| s != "null" && !s.is_empty())
+                            .unwrap_or_default();
+                        let content = if input.is_empty() {
+                            format!("调用工具 {name}")
+                        } else {
+                            format!("调用工具 {name}\n{input}")
+                        };
+                        messages.push(raw_message("tool_use", "assistant", &content, time, Some(name)));
+                    }
+                    Some("tool_result") => {
+                        if let Some(c) = block.get("content") {
+                            if let Some(text) = content_to_text(c) {
+                                messages.push(raw_message("tool_result", "assistant", &text, time, None));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 从文本类 block 中提取字符串（兼容 `text` 与 `content` 两种字段）。
+fn block_text(block: &serde_json::Value) -> Option<String> {
+    if let Some(t) = block.get("text").and_then(|x| x.as_str()) {
+        return Some(t.to_string());
+    }
+    block
+        .get("content")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string())
+}
+
+/// 从 content 值提取纯文本：字符串 / 文本块数组 / 递归 `tool_result.content`。
+fn content_to_text(content: &serde_json::Value) -> Option<String> {
     match content {
         serde_json::Value::String(s) => Some(s.clone()),
         serde_json::Value::Array(arr) => {
-            let texts: Vec<&str> = arr
-                .iter()
-                .filter_map(|block| {
-                    if block.get("type").and_then(|v| v.as_str()) == Some("text") {
-                        block.get("text").and_then(|v| v.as_str())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if texts.is_empty() {
+            let mut parts: Vec<String> = Vec::new();
+            for item in arr {
+                match item {
+                    serde_json::Value::String(s) => parts.push(s.clone()),
+                    serde_json::Value::Object(o) => match o.get("type").and_then(|x| x.as_str()) {
+                        Some("text") => {
+                            if let Some(t) = o.get("text").and_then(|x| x.as_str()) {
+                                parts.push(t.to_string());
+                            }
+                        }
+                        Some("tool_result") => {
+                            if let Some(c) = o.get("content") {
+                                if let Some(t) = content_to_text(c) {
+                                    parts.push(t);
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+            if parts.is_empty() {
                 None
             } else {
-                Some(texts.join(" "))
+                Some(parts.join("\n"))
             }
         }
+        serde_json::Value::Object(o) => o.get("text").and_then(|x| x.as_str()).map(|s| s.to_string()),
         _ => None,
     }
 }
@@ -537,7 +669,7 @@ mod tests {
 
     fn append(dir: &Path, session: &str, line: &str) {
         std::fs::create_dir_all(dir).unwrap();
-        let file = dir.join(format!("events-{session}-2026-08-20-16.jsonl"));
+        let file = dir.join(format!("event-{session}.jsonl"));
         std::fs::OpenOptions::new()
             .create(true)
             .append(true)

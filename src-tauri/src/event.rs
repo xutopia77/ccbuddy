@@ -29,7 +29,7 @@ impl Event {
     /// 解析日志文件中的一行。
     ///
     /// `session_id` 优先取 `payload.session_id`，若缺失则回退到文件名前缀
-    /// （`events-<session_id>-<timestamp>.jsonl` 中提取）。
+    /// （`event-<session_id>.jsonl` 中提取）。
     pub fn parse(line: &str, fallback_session: &str) -> Option<Event> {
         let entry: LogEntry = serde_json::from_str(line).ok()?;
         let payload = entry.payload.unwrap_or(Value::Null);

@@ -9,7 +9,7 @@ use tauri::Manager;
 
 use state::SessionInfo;
 
-/// 返回所有会话（从 `~/.claude/data/events` 日志目录解析）。
+/// 返回所有会话（从 `~/.ccbuddy/events` 日志目录解析）。
 #[tauri::command]
 fn get_sessions() -> Vec<SessionInfo> {
     state::load_sessions()
