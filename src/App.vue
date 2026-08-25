@@ -1,36 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-
-// ---- 类型定义 ----
-type SessionStatus =
-  | "running"
-  | "waiting_confirmation"
-  | "waiting_input"
-  | "error"
-  | "completed"
-  | "idle";
-
-interface Message {
-  type: "user" | "assistant" | "system";
-  role: "user" | "assistant" | "system";
-  content: string;
-  time: string;
-  toolCall?: string;
-}
-
-interface Session {
-  id: string;
-  project: string;
-  title: string;
-  status: SessionStatus;
-  lastActivity: string;
-  preview: string;
-  unread: boolean;
-  messages: Message[];
-}
-
-type View = "sessions" | "history-sessions" | "settings";
+import type { Session, SessionStatus, View } from "./types";
+import { fmtRelative } from "./types";
+import TitleBar from "./components/TitleBar.vue";
+import SessionList from "./components/SessionList.vue";
+import HistoryList from "./components/HistoryList.vue";
+import SessionDetail from "./components/SessionDetail.vue";
+import SettingsPanel from "./components/SettingsPanel.vue";
 
 // ---- 状态 ----
 const currentView = ref<View>("sessions");
@@ -100,49 +77,17 @@ const projectGroups = computed(() => {
   return Object.keys(groups).map((name) => ({ name, sessions: groups[name] }));
 });
 
+const statusCounts = computed(() => ({
+  running: countByStatus("running"),
+  waiting_confirmation: countByStatus("waiting_confirmation"),
+  waiting_input: countByStatus("waiting_input"),
+  error: countByStatus("error"),
+  completed: countByStatus("completed"),
+}));
+
 // ---- 展示辅助 ----
-function statusColor(status: SessionStatus): string {
-  const map: Record<SessionStatus, string> = {
-    running: "var(--green)",
-    waiting_confirmation: "var(--orange)",
-    waiting_input: "var(--blue)",
-    error: "var(--red)",
-    completed: "var(--gray)",
-    idle: "var(--text-muted)",
-  };
-  return map[status] ?? "var(--gray)";
-}
-
-function statusLabel(status: SessionStatus): string {
-  const map: Record<SessionStatus, string> = {
-    running: "运行中",
-    waiting_confirmation: "需确认",
-    waiting_input: "等待输入",
-    error: "异常",
-    completed: "已完成",
-    idle: "空闲",
-  };
-  return map[status] ?? status;
-}
-
 function countByStatus(status: SessionStatus): number {
   return sessions.value.filter((s) => s.status === status).length;
-}
-
-/// ISO 时间戳 → 相对时间（"刚刚"/"N分钟前"/"N小时前"/"N天前"）。
-function fmtRelative(iso: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  const sec = Math.floor((Date.now() - d.getTime()) / 1000);
-  if (sec < 60) return "刚刚";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}分钟前`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}小时前`;
-  const day = Math.floor(hr / 24);
-  if (day < 7) return `${day}天前`;
-  return d.toLocaleDateString("zh-CN");
 }
 
 // ---- 交互 ----
@@ -172,15 +117,6 @@ function locateTerminal(session: Session) {
   alert(`尝试打开终端并聚焦到 "${session.title}"`);
 }
 
-async function installHooks() {
-  try {
-    const msg = await invoke<string>("install_hooks");
-    alert(`✅ ${msg}`);
-  } catch (e) {
-    alert(`❌ 安装失败：${e}`);
-  }
-}
-
 // ---- 生命周期 ----
 onMounted(() => {
   loadSessions();
@@ -194,207 +130,23 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- 顶部标题栏 -->
-  <div class="titlebar">
-    <span class="logo">CCBuddy</span>
-    <span class="badge">Claude Code 会话管理器</span>
-    <div class="stats-inline">
-      <span class="stat-tag running" @click="currentView = 'sessions'">
-        <span class="dot"></span> 运行中 <span class="num">{{ countByStatus('running') }}</span>
-      </span>
-      <span class="stat-tag confirm" @click="currentView = 'sessions'">
-        <span class="dot"></span> 需确认 <span class="num">{{ countByStatus('waiting_confirmation') }}</span>
-      </span>
-      <span class="stat-tag input" @click="currentView = 'sessions'">
-        <span class="dot"></span> 等待输入 <span class="num">{{ countByStatus('waiting_input') }}</span>
-      </span>
-      <span class="stat-tag error" @click="currentView = 'sessions'">
-        <span class="dot"></span> 异常 <span class="num">{{ countByStatus('error') }}</span>
-      </span>
-      <span class="stat-tag done" @click="currentView = 'sessions'">
-        <span class="dot"></span> 已完成 <span class="num">{{ countByStatus('completed') }}</span>
-      </span>
-    </div>
-    <div class="spacer"></div>
-    <div class="nav-buttons">
-      <button class="nav-btn" :class="{ active: currentView === 'sessions' }" @click="currentView = 'sessions'">事件流</button>
-      <button class="nav-btn" :class="{ active: currentView === 'history-sessions' }" @click="currentView = 'history-sessions'">历史会话</button>
-      <button class="nav-btn" :class="{ active: currentView === 'settings' }" @click="currentView = 'settings'">设置</button>
-    </div>
-  </div>
+  <TitleBar :current-view="currentView" :counts="statusCounts" @navigate="currentView = $event" />
 
   <div class="main-container">
     <!-- 事件流视图 -->
     <template v-if="currentView === 'sessions'">
-      <div class="group-list-panel">
-        <div class="panel-header">
-          <span>会话事件流</span>
-          <span class="badge-count">{{ sortedSessions.length }} 个会话</span>
-        </div>
-        <div
-          v-for="session in sortedSessions"
-          :key="session.id"
-          class="session-group"
-          :class="{ active: selectedSession && selectedSession.id === session.id }"
-          @click="selectSession(session)"
-        >
-          <div class="session-group-header">
-            <span class="status-dot" :style="{ background: statusColor(session.status) }"></span>
-            <span class="project-name">{{ session.project }}</span>
-            <span class="session-title">{{ session.title }}</span>
-            <span class="time">{{ session.lastActivity }}</span>
-            <span v-if="session.unread" class="unread-indicator"></span>
-          </div>
-          <div class="session-group-preview">{{ session.preview }}</div>
-        </div>
-        <div v-if="sortedSessions.length === 0" class="empty-state" style="padding: 40px 0;">
-          <span style="font-size:48px;">📭</span>
-          <span>暂无会话，等待 Claude Code 产生事件</span>
-        </div>
-      </div>
-
-      <div class="detail-panel">
-        <template v-if="selectedSession">
-          <div class="detail-header">
-            <div class="detail-title">{{ selectedSession.title }}</div>
-            <div class="detail-status">
-              <span class="status-dot" :style="{ background: statusColor(selectedSession.status) }"></span>
-              {{ statusLabel(selectedSession.status) }}
-            </div>
-            <div class="detail-actions">
-              <button class="btn" @click="copyContext(selectedSession)">📋 复制上下文</button>
-              <button class="btn" @click="markHandled(selectedSession)">✅ 标记已处理</button>
-              <button class="btn btn-danger" @click="locateTerminal(selectedSession)">🖥️ 定位终端</button>
-            </div>
-          </div>
-          <div class="detail-body">
-            <div v-for="(msg, idx) in selectedSession.messages" :key="idx" class="message" :class="msg.type">
-              <div class="msg-meta">
-                <span>{{ msg.role === 'user' ? '👤 用户' : msg.role === 'assistant' ? '🤖 Claude' : '⚠️ 系统' }}</span>
-                <span v-if="msg.toolCall" class="tool-call-badge">{{ msg.toolCall }}</span>
-                <span style="margin-left:auto;">{{ msg.time }}</span>
-              </div>
-              <div class="msg-bubble">{{ msg.content }}</div>
-            </div>
-          </div>
-        </template>
-        <div v-else class="empty-state">
-          <span style="font-size:48px;">🗂️</span>
-          <span>选择一个会话查看事件流</span>
-        </div>
-      </div>
+      <SessionList :sessions="sortedSessions" :selected-id="selectedSessionId" @select="selectSession" />
+      <SessionDetail :session="selectedSession" empty-text="选择一个会话查看事件流" @copy="copyContext" @mark="markHandled" @locate="locateTerminal" />
     </template>
 
-    <!-- 历史会话视图 -->
+    <!-- 历史会话视图（聊天记录形式） -->
     <template v-else-if="currentView === 'history-sessions'">
-      <div class="history-group-list">
-        <div class="panel-header">
-          <span>历史会话</span>
-          <span class="badge-count">{{ sessions.length }} 个会话</span>
-        </div>
-        <div v-for="project in projectGroups" :key="project.name" class="project-group">
-          <div class="project-header">📁 {{ project.name }}</div>
-          <div
-            v-for="session in project.sessions"
-            :key="session.id"
-            class="session-item"
-            :class="{ active: selectedSession && selectedSession.id === session.id }"
-            @click="selectSession(session)"
-          >
-            <span class="status-dot" :style="{ background: statusColor(session.status) }"></span>
-            <span class="session-title">{{ session.title }}</span>
-            <span class="session-time">{{ session.lastActivity }}</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="detail-panel">
-        <template v-if="selectedSession">
-          <div class="detail-header">
-            <div class="detail-title">{{ selectedSession.title }}</div>
-            <div class="detail-status">
-              <span class="status-dot" :style="{ background: statusColor(selectedSession.status) }"></span>
-              {{ statusLabel(selectedSession.status) }}
-            </div>
-            <div class="detail-actions">
-              <button class="btn" @click="copyContext(selectedSession)">📋 复制上下文</button>
-              <button class="btn" @click="markHandled(selectedSession)">✅ 标记已处理</button>
-              <button class="btn btn-danger" @click="locateTerminal(selectedSession)">🖥️ 定位终端</button>
-            </div>
-          </div>
-          <div class="detail-body">
-            <div v-for="(msg, idx) in selectedSession.messages" :key="idx" class="message" :class="msg.type">
-              <div class="msg-meta">
-                <span>{{ msg.role === 'user' ? '👤 用户' : msg.role === 'assistant' ? '🤖 Claude' : '⚠️ 系统' }}</span>
-                <span v-if="msg.toolCall" class="tool-call-badge">{{ msg.toolCall }}</span>
-                <span style="margin-left:auto;">{{ msg.time }}</span>
-              </div>
-              <div class="msg-bubble">{{ msg.content }}</div>
-            </div>
-          </div>
-        </template>
-        <div v-else class="empty-state">
-          <span style="font-size:48px;">🗂️</span>
-          <span>选择一个会话查看详情</span>
-        </div>
-      </div>
+      <HistoryList :groups="projectGroups" :selected-id="selectedSessionId" @select="selectSession" />
+      <SessionDetail :session="selectedSession" mode="chat" empty-text="选择一个历史会话查看聊天记录" @copy="copyContext" @mark="markHandled" @locate="locateTerminal" />
     </template>
 
     <!-- 设置视图 -->
-    <div v-else-if="currentView === 'settings'" class="settings-panel">
-      <h1>⚙️ CCBuddy 设置</h1>
-      <div class="settings-section">
-        <h2>Hook 配置</h2>
-        <div class="setting-row">
-          <span class="setting-label">Hook Logger 状态</span>
-          <span><span class="status-indicator status-ok"></span>已安装</span>
-        </div>
-        <div class="setting-row">
-          <span class="setting-label">可执行文件路径</span>
-          <span class="setting-value">~/.claude/ccbuddy-hook</span>
-        </div>
-        <div class="setting-row">
-          <span class="setting-label">Claude settings.json 注册</span>
-          <span><span class="status-indicator status-warn"></span>未全部注册</span>
-        </div>
-        <div class="setting-row">
-          <button class="btn btn-primary" @click="installHooks">一键安装/更新 Hooks</button>
-        </div>
-      </div>
-      <div class="settings-section">
-        <h2>通知</h2>
-        <div class="setting-row">
-          <span class="setting-label">桌面通知</span>
-          <label><input type="checkbox" checked /> 启用</label>
-        </div>
-        <div class="setting-row">
-          <span class="setting-label">通知节流时间</span>
-          <input type="number" value="300" style="width:80px; background:var(--bg-tertiary); border:1px solid var(--border); color:var(--text-primary); padding:4px; border-radius:4px;" /> 秒
-        </div>
-      </div>
-      <div class="settings-section">
-        <h2>服务器</h2>
-        <div class="setting-row">
-          <span class="setting-label">监听地址</span>
-          <input type="text" value="127.0.0.1:8787" style="width:200px; background:var(--bg-tertiary); border:1px solid var(--border); color:var(--text-primary); padding:4px; border-radius:4px;" />
-        </div>
-        <div class="setting-row">
-          <span class="setting-label">端口冲突处理</span>
-          <span class="setting-value">启动时检测，冲突则报错</span>
-        </div>
-      </div>
-      <div class="settings-section">
-        <h2>数据目录</h2>
-        <div class="setting-row">
-          <span class="setting-label">软件数据目录</span>
-          <span class="setting-value">~/.ccbuddy/data</span>
-        </div>
-        <div class="setting-row">
-          <span class="setting-label">日志源目录</span>
-          <span class="setting-value">{{ eventsDir || '~/.claude/data/events' }}</span>
-        </div>
-      </div>
-    </div>
+    <SettingsPanel v-else-if="currentView === 'settings'" :events-dir="eventsDir" />
   </div>
 </template>
 
@@ -427,6 +179,14 @@ body {
   background: var(--bg-primary);
   color: var(--text-primary);
   height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Vue 挂载根节点必须占满并沿纵向排列，否则内部 flex:1 无法生效 */
+#app {
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -507,6 +267,7 @@ body {
 .main-container {
   display: flex;
   flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -663,22 +424,6 @@ body {
   flex-direction: column;
   overflow: hidden;
 }
-.detail-header {
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
-}
-.detail-header .detail-title { font-size: 16px; font-weight: 700; flex: 1; }
-.detail-header .detail-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
 .detail-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .btn {
   padding: 7px 14px;
@@ -699,51 +444,6 @@ body {
 .btn-danger { background: transparent; border-color: var(--red); color: var(--red); }
 .btn-danger:hover { background: rgba(239,68,68,0.1); border-color: var(--red); }
 
-.detail-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.message { display: flex; flex-direction: column; max-width: 80%; }
-.message.user { align-self: flex-end; align-items: flex-end; }
-.message.assistant { align-self: flex-start; align-items: flex-start; }
-.message.system { align-self: center; width: 100%; }
-.msg-bubble {
-  padding: 10px 14px;
-  border-radius: 12px;
-  font-size: 13px;
-  line-height: 1.5;
-  word-break: break-word;
-}
-.message.user .msg-bubble { background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-primary); }
-.message.assistant .msg-bubble { background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); }
-.message.system .msg-bubble {
-  background: rgba(239,68,68,0.1);
-  border: 1px solid var(--red);
-  color: var(--red);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-.msg-meta {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-bottom: 4px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.tool-call-badge {
-  background: rgba(245,158,11,0.15);
-  border: 1px solid var(--orange);
-  color: var(--orange);
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-family: var(--font-mono);
-}
 .empty-state {
   flex:1;
   display:flex;
