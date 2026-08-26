@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -58,15 +58,24 @@ jobs:
       - name: Build hook for other macOS arch
         if: matrix.platform == 'darwin'
         run: |
+          # 当前机器架构对应的文件名后缀（build.py 输出用 aarch64，不是 arm64）
+          CURRENT_ARCH=$(if [ "$(uname -m)" = "arm64" ]; then echo aarch64; else echo x86_64; fi)
+          # 需要交叉编译的目标 triple
           TARGET=$(if [ "$(uname -m)" = "arm64" ]; then echo x86_64-apple-darwin; else echo aarch64-apple-darwin; fi)
+          TARGET_ARCH=$(echo "$TARGET" | cut -d- -f1)
+
+          echo "Current arch: $CURRENT_ARCH"
+          echo "Cross target:  $TARGET ($TARGET_ARCH)"
+
           rustup target add "$TARGET"
           cargo build --release --bin ccbuddy-hook --target "$TARGET"
-          EXT=$(if [[ "$TARGET" == *windows* ]]; then echo .exe; else echo ""; fi)
-          cp "src-tauri/target/$TARGET/release/ccbuddy-hook$EXT" \
-             "dist-release/ccbuddy-hook-darwin-$(echo $TARGET | cut -d- -f1).out"
-          rm "dist-release/ccbuddy-hook-darwin-$(uname -m)"
-          mv "dist-release/ccbuddy-hook-darwin-$(echo $TARGET | cut -d- -f1).out" \
-             "dist-release/ccbuddy-hook-darwin-$(echo $TARGET | cut -d- -f1)"
+
+          # 交叉编译产物直接复制到最终文件名，与 build.py 产出的当前架构文件共存
+          cp "src-tauri/target/$TARGET/release/ccbuddy-hook" \
+             "dist-release/ccbuddy-hook-darwin-${TARGET_ARCH}"
+
+          echo "Final hook files in dist-release:"
+          ls -la dist-release/ccbuddy-hook-darwin-*
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
