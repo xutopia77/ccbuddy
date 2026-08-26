@@ -17,6 +17,7 @@ export interface Message {
 export interface Session {
   id: string;
   project: string;
+  cwd: string;
   title: string;
   status: SessionStatus;
   lastActivity: string;
@@ -65,4 +66,13 @@ export function fmtRelative(iso: string): string {
   const day = Math.floor(hr / 24);
   if (day < 7) return `${day}天前`;
   return d.toLocaleDateString("zh-CN");
+}
+
+/// ISO 时间戳 → "YYYY-MM-DD HH:mm:ss"（本地时区）。
+export function fmtDateTime(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }

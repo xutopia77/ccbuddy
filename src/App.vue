@@ -2,7 +2,6 @@
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import type { Session, SessionStatus, View } from "./types";
-import { fmtRelative } from "./types";
 import TitleBar from "./components/TitleBar.vue";
 import SessionList from "./components/SessionList.vue";
 import HistoryList from "./components/HistoryList.vue";
@@ -20,11 +19,9 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 // ---- 数据加载 ----
 async function loadSessions() {
   try {
+    // lastActivity 保留原始 ISO 时间戳，由各组件按需格式化
     const data = await invoke<Session[]>("get_sessions");
-    sessions.value = data.map((s) => ({
-      ...s,
-      lastActivity: fmtRelative(s.lastActivity),
-    }));
+    sessions.value = data;
 
     // 保持选中状态：若当前选中会话已消失则清除，否则若未选中则选最紧急的
     if (selectedSessionId.value && !sessions.value.find((s) => s.id === selectedSessionId.value)) {
@@ -96,27 +93,6 @@ function selectSession(session: Session) {
   session.unread = false;
 }
 
-function copyContext(session: Session) {
-  const text = session.messages
-    .map((m) => `${m.role === "user" ? "用户" : m.role === "assistant" ? "Claude" : "系统"}: ${m.content}`)
-    .join("\n");
-  navigator.clipboard?.writeText(text).then(
-    () => alert("上下文已复制到剪贴板"),
-    () => alert("复制失败：剪贴板不可用")
-  );
-}
-
-function markHandled(session: Session) {
-  // TODO: 需后端持久化"已处理"标记，当前仅本地清除未读
-  session.unread = false;
-  alert(`已标记 "${session.title}" 为已处理`);
-}
-
-function locateTerminal(session: Session) {
-  // TODO: 定位到终端（可选能力）
-  alert(`尝试打开终端并聚焦到 "${session.title}"`);
-}
-
 // ---- 生命周期 ----
 onMounted(() => {
   loadSessions();
@@ -136,13 +112,13 @@ onUnmounted(() => {
     <!-- 事件流视图 -->
     <template v-if="currentView === 'sessions'">
       <SessionList :sessions="sortedSessions" :selected-id="selectedSessionId" @select="selectSession" />
-      <SessionDetail :session="selectedSession" empty-text="选择一个会话查看事件流" @copy="copyContext" @mark="markHandled" @locate="locateTerminal" />
+      <SessionDetail :session="selectedSession" empty-text="选择一个会话查看事件流" />
     </template>
 
     <!-- 历史会话视图（聊天记录形式） -->
     <template v-else-if="currentView === 'history-sessions'">
       <HistoryList :groups="projectGroups" :selected-id="selectedSessionId" @select="selectSession" />
-      <SessionDetail :session="selectedSession" mode="chat" empty-text="选择一个历史会话查看聊天记录" @copy="copyContext" @mark="markHandled" @locate="locateTerminal" />
+      <SessionDetail :session="selectedSession" mode="chat" empty-text="选择一个历史会话查看聊天记录" />
     </template>
 
     <!-- 设置视图 -->
@@ -273,7 +249,7 @@ body {
 
 /* 左侧列表面板（事件流视图） */
 .group-list-panel {
-  width: 420px;
+  width: 320px;
   background: var(--bg-primary);
   border-right: 1px solid var(--border);
   display: flex;
@@ -424,7 +400,6 @@ body {
   flex-direction: column;
   overflow: hidden;
 }
-.detail-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .btn {
   padding: 7px 14px;
   border-radius: var(--radius-sm);

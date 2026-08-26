@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Session } from "../types";
-import { statusColor } from "../types";
+import { statusColor, fmtRelative } from "../types";
 
 defineProps<{
   sessions: Session[];
@@ -27,7 +27,7 @@ defineEmits<{ select: [session: Session] }>();
         <span class="status-dot" :style="{ background: statusColor(session.status) }"></span>
         <span class="project-name">{{ session.project }}</span>
         <span class="session-title">{{ session.title }}</span>
-        <span class="time">{{ session.lastActivity }}</span>
+        <span class="time">{{ fmtRelative(session.lastActivity) }}</span>
         <span v-if="session.unread" class="unread-indicator"></span>
       </div>
       <div class="session-group-preview">{{ session.preview }}</div>

@@ -10,7 +10,12 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+dist-release
 *.local
+
+# Tauri 构建产物 / 占位 hook 二进制
+src-tauri/target
+src-tauri/binaries
 
 # Editor directories and files
 .vscode/*

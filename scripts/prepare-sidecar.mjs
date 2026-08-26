@@ -16,11 +16,18 @@ const hookName = process.platform === 'win32' ? 'ccbuddy-hook.exe' : 'ccbuddy-ho
 const binDir = join(srcTauri, 'binaries');
 mkdirSync(binDir, { recursive: true });
 const dest = join(binDir, hookName);
+// Windows 资源清单写的是无扩展名的 "binaries/ccbuddy-hook"（Tauri 资源映射会自动匹配平台扩展名），
+// 统一以无扩展名路径占位，再写入真实文件。
+const placeholder = join(binDir, 'ccbuddy-hook');
+const placeholderWin = join(binDir, 'ccbuddy-hook.exe');
 
 // 1. 占位：确保 resources 引用的文件存在（否则 build.rs 检查失败）
-if (!existsSync(dest)) {
-  writeFileSync(dest, '');
-  console.log(`[sidecar] 已创建占位文件 → ${dest}`);
+if (!existsSync(placeholder)) {
+  writeFileSync(placeholder, '');
+  console.log(`[sidecar] 已创建占位文件 → ${placeholder}`);
+}
+if (process.platform === 'win32' && !existsSync(placeholderWin)) {
+  writeFileSync(placeholderWin, '');
 }
 
 // 2. 构建真正的 hook（此时 build.rs 能看到占位文件，检查通过）
@@ -33,4 +40,7 @@ execSync('cargo build --release --bin ccbuddy-hook', {
 // 3. 用真实 hook 覆盖占位文件
 const hook = join(srcTauri, 'target', 'release', hookName);
 copyFileSync(hook, dest);
+if (process.platform === 'win32') {
+  copyFileSync(hook, placeholderWin);
+}
 console.log(`[sidecar] 已替换为真实 hook → ${dest}`);

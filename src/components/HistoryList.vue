@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { Session } from "../types";
-import { statusColor } from "../types";
+import { statusColor, fmtRelative } from "../types";
 
 const props = defineProps<{
   groups: { name: string; sessions: Session[] }[];
@@ -30,7 +30,7 @@ const totalCount = computed(() => props.groups.reduce((n, g) => n + g.sessions.l
       >
         <span class="status-dot" :style="{ background: statusColor(session.status) }"></span>
         <span class="session-title">{{ session.title }}</span>
-        <span class="session-time">{{ session.lastActivity }}</span>
+        <span class="session-time">{{ fmtRelative(session.lastActivity) }}</span>
       </div>
     </div>
   </div>

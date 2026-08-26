@@ -25,9 +25,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": "nsis",
+    "targets": ["nsis", "appimage", "dmg"],
     "resources": [
-      "binaries/ccbuddy-hook.exe"
+      "binaries/ccbuddy-hook"
     ],
     "icon": [
       "icons/32x32.png",

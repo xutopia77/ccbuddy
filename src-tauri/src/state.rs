@@ -46,7 +46,10 @@ pub struct Message {
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionInfo {
     pub id: String,
+    /// 项目名（目录名，用于分组）
     pub project: String,
+    /// 项目完整路径
+    pub cwd: String,
     pub title: String,
     pub status: String,
     #[serde(rename = "lastActivity")]
@@ -62,6 +65,7 @@ struct SessionAgg {
     status: SessionStatus,
     title: String,
     project: String,
+    cwd: String,
     last_activity: String,
     preview: String,
     messages: Vec<Message>,
@@ -75,6 +79,7 @@ impl SessionAgg {
             status: SessionStatus::Idle,
             title: String::new(),
             project: String::new(),
+            cwd: String::new(),
             last_activity: String::new(),
             preview: String::new(),
             messages: Vec::new(),
@@ -98,6 +103,7 @@ impl SessionAgg {
         self.last_activity = ev.received_at.clone();
 
         if let Some(cwd) = &ev.cwd {
+            self.cwd = cwd.clone();
             self.set_project_from_cwd(cwd);
         }
 
@@ -212,6 +218,7 @@ impl SessionAgg {
         SessionInfo {
             id: self.id,
             project,
+            cwd: self.cwd,
             title,
             status: self.status.as_str().to_string(),
             last_activity: self.last_activity,
@@ -403,8 +410,10 @@ fn parse_native_session(path: &Path) -> Option<SessionInfo> {
     let content = std::fs::read_to_string(path).ok()?;
 
     let mut custom_title = String::new();
+    let mut ai_title = String::new();
     let mut title = String::new();
     let mut project = String::new();
+    let mut cwd = String::new();
     let mut last_activity = String::new();
     let mut preview = String::new();
     let mut messages: Vec<Message> = Vec::new();
@@ -420,13 +429,14 @@ fn parse_native_session(path: &Path) -> Option<SessionInfo> {
         if let Some(ts) = v.get("timestamp").and_then(|x| x.as_str()) {
             last_activity = ts.to_string();
         }
-        if project.is_empty() {
-            if let Some(cwd) = v.get("cwd").and_then(|x| x.as_str()) {
-                project = cwd
+        if cwd.is_empty() {
+            if let Some(c) = v.get("cwd").and_then(|x| x.as_str()) {
+                cwd = c.to_string();
+                project = c
                     .trim_end_matches(['/', '\\'])
                     .rsplit(['/', '\\'])
                     .next()
-                    .unwrap_or(cwd)
+                    .unwrap_or(c)
                     .to_string();
             }
         }
@@ -435,6 +445,12 @@ fn parse_native_session(path: &Path) -> Option<SessionInfo> {
             "custom-title" => {
                 if let Some(ct) = v.get("customTitle").and_then(|x| x.as_str()) {
                     custom_title = ct.to_string();
+                }
+            }
+            // Claude Code 落盘的 AI 总结标题（若版本支持）
+            "summary" => {
+                if let Some(s) = v.get("summary").and_then(|x| x.as_str()) {
+                    ai_title = s.to_string();
                 }
             }
             "user" => parse_user_line(&v, &last_activity, &mut title, &mut preview, &mut messages),
@@ -450,6 +466,17 @@ fn parse_native_session(path: &Path) -> Option<SessionInfo> {
         }
     }
 
+    // 标题优先级：用户自定义 > AI 总结 > 首条用户输入
+    let final_title = if !custom_title.is_empty() {
+        custom_title
+    } else if !ai_title.is_empty() {
+        ai_title
+    } else if !title.is_empty() {
+        title
+    } else {
+        "(未命名会话)".to_string()
+    };
+
     Some(SessionInfo {
         id: session_id,
         project: if project.is_empty() {
@@ -457,15 +484,8 @@ fn parse_native_session(path: &Path) -> Option<SessionInfo> {
         } else {
             project
         },
-        title: if title.is_empty() {
-            if custom_title.is_empty() {
-                "(未命名会话)".to_string()
-            } else {
-                custom_title
-            }
-        } else {
-            title
-        },
+        cwd,
+        title: final_title,
         status: "completed".to_string(),
         last_activity,
         preview,

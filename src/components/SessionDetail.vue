@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import type { Message, Session } from "../types";
-import { statusColor, statusLabel } from "../types";
+import { statusColor, statusLabel, fmtDateTime } from "../types";
 
 const props = defineProps<{
   session: Session | null;
@@ -10,11 +10,20 @@ const props = defineProps<{
   mode?: "events" | "chat";
 }>();
 
-defineEmits<{
-  copy: [session: Session];
-  mark: [session: Session];
-  locate: [session: Session];
-}>();
+/** 恢复会话的完整命令 */
+function resumeCommand(s: Session): string {
+  return `claude --resume ${s.id}`;
+}
+
+const copied = ref(false);
+
+/** 复制整条恢复命令 */
+function copyResume(s: Session) {
+  navigator.clipboard?.writeText(resumeCommand(s)).then(() => {
+    copied.value = true;
+    setTimeout(() => (copied.value = false), 1500);
+  });
+}
 
 interface BadgeInfo {
   icon: string;
@@ -111,23 +120,21 @@ function isCollapsedInChat(msg: Message): boolean {
     <template v-if="session">
       <!-- 会话信息头 -->
       <div class="session-header">
-        <div class="session-top">
-          <div class="session-status">
-            <span class="status-dot" :style="{ background: statusColor(session.status) }"></span>
-            <span class="status-text">{{ statusLabel(session.status) }}</span>
-            <span class="session-title">{{ session.title }}</span>
-          </div>
-          <div class="detail-actions">
-            <button class="ev-btn" @click="$emit('copy', session)">复制上下文</button>
-            <button class="ev-btn" @click="$emit('mark', session)">标记已处理</button>
-            <button class="ev-btn ev-btn-danger" @click="$emit('locate', session)">定位终端</button>
-          </div>
+        <!-- 第一行：会话名称 + 项目全路径 -->
+        <div class="header-row">
+          <span class="session-title">{{ session.title }}</span>
+          <span class="session-path">{{ session.cwd || session.project }}</span>
         </div>
-        <div class="session-meta">
-          <span class="folder-icon">📁</span>
-          <span class="path">{{ session.project }}</span>
-          <span class="session-id">{{ session.id.slice(0, 8) }}</span>
-          <span class="time">{{ session.lastActivity }}</span>
+        <!-- 第二行：最后活动时间 + 恢复命令（文本可选中复制 id，按钮复制整条命令） -->
+        <div class="header-row">
+          <span class="header-time">{{ fmtDateTime(session.lastActivity) }}</span>
+          <code class="resume-cmd">{{ resumeCommand(session) }}</code>
+          <button class="copy-btn" @click="copyResume(session)">{{ copied ? "已复制" : "复制" }}</button>
+        </div>
+        <!-- 第三行：最新状态（仅事件流视图显示） -->
+        <div v-if="mode !== 'chat'" class="header-row">
+          <span class="status-dot" :style="{ background: statusColor(session.status) }"></span>
+          <span class="status-text">{{ statusLabel(session.status) }}</span>
         </div>
       </div>
 
@@ -198,77 +205,81 @@ function isCollapsedInChat(msg: Message): boolean {
 
 /* 会话信息头 */
 .session-header {
-  padding: 12px 20px;
+  padding: 10px 20px;
   border-bottom: 1px solid #3c3c3c;
   background: #2d2d30;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
-.session-top {
+.header-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 6px;
-}
-.session-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
-  flex: 1;
-}
-.status-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.status-text {
-  color: #858585;
-  font-size: 13px;
-  flex-shrink: 0;
 }
 .session-title {
   color: #d4d4d4;
   font-weight: bold;
-  font-size: 13px;
+  font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
 }
-.session-meta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  font-size: 13px;
+.session-path {
+  color: #858585;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
 }
-.session-meta .folder-icon { color: #dcb67a; }
-.session-meta .path { color: #d4d4d4; }
-.session-meta .session-id {
+.header-time {
+  color: #858585;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.resume-cmd {
+  font-family: var(--font-mono);
+  font-size: 12px;
   color: #4ec9b0;
   background: #1e1e1e;
-  padding: 1px 6px;
+  padding: 1px 8px;
   border-radius: 3px;
-  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+  user-select: text;
 }
-.session-meta .time { color: #858585; }
-
-/* 操作按钮 */
-.detail-actions { display: flex; gap: 8px; flex-shrink: 0; }
-.ev-btn {
+.copy-btn {
   background: #1e1e1e;
   border: 1px solid #3c3c3c;
   color: #9cdcfe;
   font-family: var(--font-mono);
   font-size: 12px;
-  padding: 3px 10px;
+  padding: 2px 10px;
   border-radius: 3px;
   cursor: pointer;
+  flex-shrink: 0;
   transition: all 0.15s;
 }
-.ev-btn:hover { background: #2a2d2e; border-color: #569cd6; }
-.ev-btn-danger { color: #f48771; }
-.ev-btn-danger:hover { border-color: #f48771; }
+.copy-btn:hover { background: #2a2d2e; border-color: #569cd6; }
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-text {
+  color: #858585;
+  font-size: 12px;
+}
 
 /* 展开箭头与详情块（两种模式共用） */
 .expand-arrow {
