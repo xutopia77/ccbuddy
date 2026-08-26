@@ -68,7 +68,8 @@ jobs:
           echo "Cross target:  $TARGET ($TARGET_ARCH)"
 
           rustup target add "$TARGET"
-          cargo build --release --bin ccbuddy-hook --target "$TARGET"
+          cargo build --release --bin ccbuddy-hook --target "$TARGET" \
+            --manifest-path src-tauri/Cargo.toml
 
           # 交叉编译产物直接复制到最终文件名，与 build.py 产出的当前架构文件共存
           cp "src-tauri/target/$TARGET/release/ccbuddy-hook" \
