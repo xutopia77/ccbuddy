@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { invoke } from "@tauri-apps/api/core";
+import { installHooks as callInstallHooks } from "../api";
 
 defineProps<{ eventsDir: string }>();
 
 async function installHooks() {
   try {
-    const msg = await invoke<string>("install_hooks");
+    const msg = await callInstallHooks();
     alert(`✅ ${msg}`);
   } catch (e) {
     alert(`❌ 安装失败：${e}`);

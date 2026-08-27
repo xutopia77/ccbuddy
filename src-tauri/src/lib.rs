@@ -2,24 +2,80 @@ mod event;
 mod server;
 mod state;
 
-#[cfg(any(feature = "gui", test))]
 use serde_json::{json, Value};
 
 /// 无头服务入口：启动内嵌 HTTP 服务（无桌面环境的 Linux 服务器使用）。
-pub fn run_server(addr: &str) {
+///
+/// assets 传入编译时嵌入的前端静态资源（include_dir）。
+pub fn run_server(addr: &str, assets: &'static include_dir::Dir<'static>) {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("创建 tokio 运行时失败");
-    rt.block_on(server::start(addr));
+    rt.block_on(server::start(addr, assets));
+}
+
+/// 安装 hook 的共享实现：从候选路径定位 ccbuddy-hook，复制到 `~/.claude/` 并注册 hooks。
+/// GUI（resource_dir + 主程序同目录）与 server（主程序同目录）都会走到这里。
+pub fn install_hooks_with(candidates: Vec<std::path::PathBuf>) -> Result<String, String> {
+    let hook_name = if cfg!(windows) {
+        "ccbuddy-hook.exe"
+    } else {
+        "ccbuddy-hook"
+    };
+
+    let hook_src = candidates
+        .into_iter()
+        .find(|p| p.exists())
+        .ok_or_else(|| "未找到 hook 程序 ccbuddy-hook，请重新安装或重新构建".to_string())?;
+
+    // 复制到 ~/.claude/
+    let home = dirs::home_dir().ok_or_else(|| "无法获取用户主目录".to_string())?;
+    let claude_dir = home.join(".claude");
+    std::fs::create_dir_all(&claude_dir).map_err(|e| format!("创建目录失败: {e}"))?;
+    let hook_dst = claude_dir.join(hook_name);
+    std::fs::copy(&hook_src, &hook_dst).map_err(|e| format!("复制 hook 失败: {e}"))?;
+
+    // 写 settings.json 注册 hooks
+    write_hook_settings(&claude_dir, &hook_dst)?;
+
+    Ok(format!("已安装 hook 并注册到 {}", claude_dir.display()))
+}
+
+/// 合并写入 `~/.claude/settings.json` 的 hooks 配置，保留原有其他字段。
+fn write_hook_settings(claude_dir: &std::path::Path, hook_path: &std::path::Path) -> Result<(), String> {
+    let settings_path = claude_dir.join("settings.json");
+    // Windows 上 hook command 由 Git Bash 执行，正斜杠路径更可靠（避免反斜杠转义问题）
+    let command = hook_path.to_string_lossy().replace('\\', "/");
+
+    // 读取现有配置；若含注释（jsonc）无法解析，则先备份原文件再覆盖
+    let (mut root, backed_up) = match std::fs::read_to_string(&settings_path) {
+        Ok(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(v) => (v, false),
+            Err(_) => {
+                let _ = std::fs::copy(&settings_path, claude_dir.join("settings.json.bak"));
+                (Value::Object(Default::default()), true)
+            }
+        },
+        Err(_) => (Value::Object(Default::default()), false),
+    };
+
+    if let Value::Object(map) = &mut root {
+        merge_hooks(map, &command);
+    }
+
+    let text = serde_json::to_string_pretty(&root).map_err(|e| format!("序列化失败: {e}"))?;
+    std::fs::write(&settings_path, text).map_err(|e| format!("写入 settings.json 失败: {e}"))?;
+
+    if backed_up {
+        return Ok(());
+    }
+    Ok(())
 }
 
 /// 桌面 GUI（Tauri）相关代码，仅启用 `gui` feature 时编译。
 #[cfg(feature = "gui")]
 mod gui {
-    use std::path::Path;
-
-    use serde_json::Value;
     use tauri::Manager;
 
     use crate::state;
@@ -46,7 +102,7 @@ mod gui {
             "ccbuddy-hook"
         };
 
-        // 1. 定位 hook 源：resource_dir（release 安装后）→ 主程序同目录（开发时）
+        // 定位 hook 源：resource_dir（release 安装后）→ 主程序同目录（开发时）
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
         if let Ok(rd) = app.path().resource_dir() {
             candidates.push(rd.join(hook_name));
@@ -56,53 +112,7 @@ mod gui {
                 candidates.push(dir.join(hook_name));
             }
         }
-        let hook_src = candidates
-            .into_iter()
-            .find(|p| p.exists())
-            .ok_or_else(|| "未找到 hook 程序 ccbuddy-hook，请重新安装或重新构建".to_string())?;
-
-        // 2. 复制到 ~/.claude/
-        let home = dirs::home_dir().ok_or_else(|| "无法获取用户主目录".to_string())?;
-        let claude_dir = home.join(".claude");
-        std::fs::create_dir_all(&claude_dir).map_err(|e| format!("创建目录失败: {e}"))?;
-        let hook_dst = claude_dir.join(hook_name);
-        std::fs::copy(&hook_src, &hook_dst).map_err(|e| format!("复制 hook 失败: {e}"))?;
-
-        // 3. 写 settings.json 注册 hooks
-        write_hook_settings(&claude_dir, &hook_dst)?;
-
-        Ok(format!("已安装 hook 并注册到 {}", claude_dir.display()))
-    }
-
-    /// 合并写入 `~/.claude/settings.json` 的 hooks 配置，保留原有其他字段。
-    fn write_hook_settings(claude_dir: &Path, hook_path: &Path) -> Result<(), String> {
-        let settings_path = claude_dir.join("settings.json");
-        // Windows 上 hook command 由 Git Bash 执行，正斜杠路径更可靠（避免反斜杠转义问题）
-        let command = hook_path.to_string_lossy().replace('\\', "/");
-
-        // 读取现有配置；若含注释（jsonc）无法解析，则先备份原文件再覆盖
-        let (mut root, backed_up) = match std::fs::read_to_string(&settings_path) {
-            Ok(text) => match serde_json::from_str::<Value>(&text) {
-                Ok(v) => (v, false),
-                Err(_) => {
-                    let _ = std::fs::copy(&settings_path, claude_dir.join("settings.json.bak"));
-                    (Value::Object(Default::default()), true)
-                }
-            },
-            Err(_) => (Value::Object(Default::default()), false),
-        };
-
-        if let Value::Object(map) = &mut root {
-            crate::merge_hooks(map, &command);
-        }
-
-        let text = serde_json::to_string_pretty(&root).map_err(|e| format!("序列化失败: {e}"))?;
-        std::fs::write(&settings_path, text).map_err(|e| format!("写入 settings.json 失败: {e}"))?;
-
-        if backed_up {
-            return Ok(());
-        }
-        Ok(())
+        crate::install_hooks_with(candidates)
     }
 
     #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -114,12 +124,6 @@ mod gui {
                 get_events_dir,
                 install_hooks
             ])
-            .setup(|_app| {
-                tauri::async_runtime::spawn(async {
-                    crate::server::start("127.0.0.1:8787").await;
-                });
-                Ok(())
-            })
             .run(tauri::generate_context!())
             .expect("error while running tauri application");
     }
@@ -129,7 +133,6 @@ mod gui {
 pub use gui::run;
 
 /// 把 ccbuddy-hook 的 hook 合并进现有 hooks 配置，不覆盖已有事件与其他 hook。
-#[cfg(any(feature = "gui", test))]
 fn merge_hooks(map: &mut serde_json::Map<String, Value>, command: &str) {
     let hook_events = [
         "PreToolUse",
@@ -169,7 +172,6 @@ fn merge_hooks(map: &mut serde_json::Map<String, Value>, command: &str) {
 }
 
 /// 判断一个 hook entry 是否已指向指定 command（兼容扁平与三层两种格式）。
-#[cfg(any(feature = "gui", test))]
 fn entry_has_command(entry: &Value, command: &str) -> bool {
     if entry.get("command").and_then(|v| v.as_str()) == Some(command) {
         return true;

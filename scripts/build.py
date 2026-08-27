@@ -119,9 +119,14 @@ def build_server(target: str | None = None) -> Path | None:
     """
     构建无头服务端 ccbuddy-server（无桌面环境的 Linux 服务器使用）。
 
+    前端 Vue 产物在编译时嵌入二进制（include_dir），构建前必须先 npm run build。
     target 传入时交叉编译（如 x86_64-unknown-linux-musl 静态链接产物，
     无任何系统依赖，可直接在任意 Linux 服务器运行）。
     """
+    if not (ROOT / "dist" / "index.html").exists():
+        print("[build] 前端产物不存在，先执行 npm run build ...")
+        run(["npm", "run", "build"], cwd=ROOT)
+
     cmd = ["cargo", "build", "--release", "--no-default-features", "--bin", "ccbuddy-server"]
     if target:
         cmd += ["--target", target]

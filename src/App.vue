@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import type { Session, SessionStatus, View } from "./types";
+import { getSessions, getEventsDir } from "./api";
 import TitleBar from "./components/TitleBar.vue";
 import SessionList from "./components/SessionList.vue";
 import HistoryList from "./components/HistoryList.vue";
@@ -20,7 +20,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 async function loadSessions() {
   try {
     // lastActivity 保留原始 ISO 时间戳，由各组件按需格式化
-    const data = await invoke<Session[]>("get_sessions");
+    const data = await getSessions();
     sessions.value = data;
 
     // 保持选中状态：若当前选中会话已消失则清除，否则若未选中则选最紧急的
@@ -40,7 +40,7 @@ async function loadSessions() {
 
 async function loadEventsDir() {
   try {
-    eventsDir.value = await invoke<string>("get_events_dir");
+    eventsDir.value = await getEventsDir();
   } catch {
     eventsDir.value = "";
   }
