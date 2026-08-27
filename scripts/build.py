@@ -115,6 +115,27 @@ def build_hook_cross(target: str, out_name: str, env_extra: str | None) -> bool:
     return True
 
 
+def build_server(target: str | None = None) -> Path | None:
+    """
+    构建无头服务端 ccbuddy-server（无桌面环境的 Linux 服务器使用）。
+
+    target 传入时交叉编译（如 x86_64-unknown-linux-musl 静态链接产物，
+    无任何系统依赖，可直接在任意 Linux 服务器运行）。
+    """
+    cmd = ["cargo", "build", "--release", "--no-default-features", "--bin", "ccbuddy-server"]
+    if target:
+        cmd += ["--target", target]
+    ensure_hook_placeholder()
+    run(cmd, cwd=SRC_TAURI)
+
+    if target:
+        bin_dir = SRC_TAURI / "target" / target / "release"
+    else:
+        bin_dir = SRC_TAURI / "target" / "release"
+    name = "ccbuddy-server.exe" if sys.platform == "win32" else "ccbuddy-server"
+    return bin_dir / name
+
+
 def build_app_current() -> list[Path]:
     """构建当前平台的 Tauri 主程序（含前端与 hook sidecar），返回安装包产物列表。"""
     run(["npm", "run", "tauri", "build"], cwd=ROOT)
@@ -154,6 +175,9 @@ def build_app_current() -> list[Path]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="ccbuddy 打包脚本")
     parser.add_argument("--hook-only", action="store_true", help="仅构建 hook 二进制")
+    parser.add_argument("--server", action="store_true", help="额外构建无头服务端 ccbuddy-server")
+    parser.add_argument("--server-musl", action="store_true",
+                        help="构建 Linux musl 静态链接的 ccbuddy-server（仅 Linux 可用）")
     parser.add_argument("--all", action="store_true", help="尝试构建所有平台 hook（交叉编译）")
     args = parser.parse_args()
 
@@ -175,6 +199,23 @@ def main() -> None:
     hook_out = OUT_DIR / f"ccbuddy-hook-{plat}-{arch}{hook.suffix}"
     shutil.copy2(hook, hook_out)
     print(f"[build] hook → {hook_out}")
+
+    if args.server:
+        server = build_server()
+        server_out = OUT_DIR / f"ccbuddy-server-{plat}-{arch}{server.suffix}"
+        shutil.copy2(server, server_out)
+        print(f"[build] server → {server_out}")
+
+    if args.server_musl:
+        if platform.system() != "Linux":
+            print("[build] --server-musl 仅支持在 Linux 上构建")
+            sys.exit(1)
+        target = "x86_64-unknown-linux-musl"
+        run(["rustup", "target", "add", target])
+        server = build_server(target)
+        server_out = OUT_DIR / "ccbuddy-server-linux-x86_64-musl"
+        shutil.copy2(server, server_out)
+        print(f"[build] server(musl) → {server_out}")
 
     if not args.hook_only:
         build_app_current()

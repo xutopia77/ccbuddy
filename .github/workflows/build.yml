@@ -42,17 +42,22 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install Linux system deps (Tauri)
+      - name: Install Linux system deps (Tauri + musl)
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf musl-tools
 
       - name: Install npm dependencies
         run: npm ci
 
       - name: Build (app + hook)
         run: python scripts/build.py
+
+      # Linux：构建 musl 静态链接的无头服务端（无桌面环境服务器直接运行）
+      - name: Build headless server (musl)
+        if: matrix.platform == 'linux'
+        run: python scripts/build.py --server-musl --hook-only
 
       # macOS 额外交叉编译另一个架构的 hook（x86_64 / aarch64 各一份）
       - name: Build hook for other macOS arch

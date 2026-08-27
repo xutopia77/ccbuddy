@@ -1,9 +1,12 @@
 //! 内嵌 HTTP 服务（无头 Linux / 浏览器访问场景）。
 //!
-//! 监听 `127.0.0.1:8787`，提供：
+//! 默认监听 `127.0.0.1:8787`，提供：
 //! - `GET /api/sessions` — 会话列表 JSON
 //! - `GET /api/stats`    — 各状态计数
 //! - `GET /`             — 极简暗色 Web 界面（前端 fetch 实时渲染）
+//!
+//! ccbuddy-server 可通过命令行参数或 `CCBUDDY_ADDR` 环境变量指定监听地址，
+//! 如 `ccbuddy-server 0.0.0.0:8787`（远程服务器供外部浏览器访问）。
 
 use std::collections::HashMap;
 
@@ -14,21 +17,21 @@ use serde_json::Value;
 
 use crate::state;
 
-pub async fn start() {
+pub async fn start(addr: &str) {
     let app = Router::new()
         .route("/api/sessions", get(sessions_api))
         .route("/api/stats", get(stats_api))
         .route("/", get(index))
         .fallback(not_found);
 
-    let listener = match tokio::net::TcpListener::bind("127.0.0.1:8787").await {
+    let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("[ccbuddy] 无法监听 127.0.0.1:8787（端口可能被占用）: {e}");
+            eprintln!("[ccbuddy] 无法监听 {addr}（端口可能被占用）: {e}");
             return;
         }
     };
-    println!("[ccbuddy] HTTP 服务已启动: http://127.0.0.1:8787");
+    println!("[ccbuddy] HTTP 服务已启动: http://{addr}");
     if let Err(e) = axum::serve(listener, app).await {
         eprintln!("[ccbuddy] HTTP 服务异常: {e}");
     }
