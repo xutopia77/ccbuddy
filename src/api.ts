@@ -12,3 +12,6 @@ export const getEventsDir = () => request<string>("get_events_dir");
 
 /** 一键安装 hook（复制 ccbuddy-hook 并注册到 settings.json）。 */
 export const installHooks = () => request<string>("install_hooks");
+
+/** 运行时设置日志打印等级（error/warn/info/debug/trace）。 */
+export const setLogLevel = (level: string) => request<string>("set_log_level", level);

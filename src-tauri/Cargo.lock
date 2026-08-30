@@ -480,6 +480,7 @@ dependencies = [
  "chrono",
  "dirs",
  "include_dir",
+ "log",
  "serde",
  "serde_json",
  "tauri",

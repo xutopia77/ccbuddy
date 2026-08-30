@@ -34,13 +34,13 @@ pub async fn start(addr: &str, assets: &'static Dir<'static>) {
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("[ccbuddy] 无法监听 {addr}（端口可能被占用）: {e}");
+            log::error!("无法监听 {addr}（端口可能被占用）: {e}");
             return;
         }
     };
-    println!("[ccbuddy] HTTP 服务已启动: http://{addr}");
+    log::info!("HTTP 服务已启动: http://{addr}");
     if let Err(e) = axum::serve(listener, app).await {
-        eprintln!("[ccbuddy] HTTP 服务异常: {e}");
+        log::error!("HTTP 服务异常: {e}");
     }
 }
 

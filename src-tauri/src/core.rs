@@ -19,14 +19,20 @@ pub struct RpcContext {
 
 /// 命令分发入口：根据 `cmd` 路由到对应业务函数，统一包装为 `RpcResponse`。
 pub fn dispatch(ctx: &RpcContext, cmd: &str, data: Value) -> RpcResponse {
-    match handle(ctx, cmd, data) {
+    log::debug!("RPC 命令: {cmd}");
+    let resp = match handle(ctx, cmd, data) {
         Ok(v) => ok(cmd, v),
-        Err(e) => err(cmd, e.code, e.status),
-    }
+        Err(e) => {
+            log::warn!("命令 {cmd} 失败: code={} status={}", e.code, e.status);
+            err(cmd, e.code, e.status)
+        }
+    };
+    log::debug!("RPC 响应: {cmd} code={} data_size={}", resp.code, resp.data.to_string().len());
+    resp
 }
 
 /// 命令路由表：新增命令在此添加分支。
-fn handle(ctx: &RpcContext, cmd: &str, _data: Value) -> Result<Value, AppError> {
+fn handle(ctx: &RpcContext, cmd: &str, data: Value) -> Result<Value, AppError> {
     match cmd {
         // 会话列表（含 hook 日志实时会话 + 原生历史会话）
         "get_sessions" => Ok(json!(crate::state::load_sessions())),
@@ -37,6 +43,17 @@ fn handle(ctx: &RpcContext, cmd: &str, _data: Value) -> Result<Value, AppError> 
             let msg = crate::install_hooks_with(ctx.hook_candidates.clone())
                 .map_err(AppError::internal)?;
             Ok(json!(msg))
+        }
+        // 运行时调整日志打印等级
+        "set_log_level" => {
+            let level_str = data
+                .as_str()
+                .ok_or_else(|| AppError::bad_request("日志等级需为字符串 (error/warn/info/debug/trace)"))?;
+            let level = crate::logger::Level::parse(level_str)
+                .ok_or_else(|| AppError::bad_request(format!("无效日志等级: {level_str}")))?;
+            crate::logger::set_level(level);
+            log::info!("日志等级已设置为 {}", level.as_str());
+            Ok(json!(format!("日志等级已设置为 {}", level.as_str())))
         }
         _ => Err(AppError::bad_request(format!("未知命令: {cmd}"))),
     }

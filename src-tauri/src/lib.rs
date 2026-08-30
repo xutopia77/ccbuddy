@@ -1,5 +1,6 @@
 mod core;
 mod event;
+mod logger;
 mod rpc;
 mod server;
 mod state;
@@ -10,6 +11,7 @@ use serde_json::{json, Value};
 ///
 /// assets 传入编译时嵌入的前端静态资源（include_dir）。
 pub fn run_server(addr: &str, assets: &'static include_dir::Dir<'static>) {
+    let _ = logger::init(logger::Config::default());
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -117,6 +119,7 @@ mod gui {
 
     #[cfg_attr(mobile, tauri::mobile_entry_point)]
     pub fn run() {
+        let _ = crate::logger::init(crate::logger::Config::default());
         tauri::Builder::default()
             .plugin(tauri_plugin_opener::init())
             .invoke_handler(tauri::generate_handler![rpc])
