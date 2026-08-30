@@ -34,8 +34,10 @@ pub fn dispatch(ctx: &RpcContext, cmd: &str, data: Value) -> RpcResponse {
 /// 命令路由表：新增命令在此添加分支。
 fn handle(ctx: &RpcContext, cmd: &str, data: Value) -> Result<Value, AppError> {
     match cmd {
-        // 会话列表（含 hook 日志实时会话 + 原生历史会话）；懒加载，messages 为空
-        "get_sessions" => Ok(json!(crate::state::load_sessions())),
+        // 事件流会话列表（hook 日志，懒加载 messages 为空）
+        "get_events" => Ok(json!(crate::state::load_sessions())),
+        // 会话列表（Claude Code 原生 transcript，与事件流分开）
+        "get_sessions" => Ok(json!(crate::state::load_history_sessions())),
         // 单个会话的完整消息（用户点开详情时按需解析 jsonl）
         "get_session_detail" => {
             let id = data
@@ -45,8 +47,16 @@ fn handle(ctx: &RpcContext, cmd: &str, data: Value) -> Result<Value, AppError> {
                 .map(|s| json!(s))
                 .ok_or_else(|| AppError::not_found(format!("会话不存在: {id}")))
         }
-        // 日志源目录路径
-        "get_events_dir" => Ok(json!(crate::state::events_dir().to_string_lossy().to_string())),
+        // 读取用户配置（含只读的 events_dir 等派生字段）
+        "get_config" => Ok(json!(crate::config::config_view())),
+        // 更新用户配置（部分更新：只覆盖传入的字段；log_level 为运行时项不入盘）
+        "set_config" => {
+            let patch = data
+                .as_object()
+                .ok_or_else(|| AppError::bad_request("配置需为对象"))?;
+            crate::config::apply_patch(patch).map_err(AppError::internal)?;
+            Ok(json!(crate::config::config_view()))
+        }
         // hook 安装/注册状态（设置页展示）
         "get_hook_status" => Ok(crate::state::hook_status()),
         // 一键安装 hook
@@ -54,17 +64,6 @@ fn handle(ctx: &RpcContext, cmd: &str, data: Value) -> Result<Value, AppError> {
             let msg = crate::install_hooks_with(ctx.hook_candidates.clone())
                 .map_err(AppError::internal)?;
             Ok(json!(msg))
-        }
-        // 运行时调整日志打印等级
-        "set_log_level" => {
-            let level_str = data
-                .as_str()
-                .ok_or_else(|| AppError::bad_request("日志等级需为字符串 (error/warn/info/debug/trace)"))?;
-            let level = crate::logger::Level::parse(level_str)
-                .ok_or_else(|| AppError::bad_request(format!("无效日志等级: {level_str}")))?;
-            crate::logger::set_level(level);
-            log::info!("日志等级已设置为 {}", level.as_str());
-            Ok(json!(format!("日志等级已设置为 {}", level.as_str())))
         }
         _ => Err(AppError::bad_request(format!("未知命令: {cmd}"))),
     }

@@ -1,29 +1,32 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import type { Session, SessionStatus, View, PollConfig } from "./types";
-import { getSessions, getSessionDetail, getEventsDir } from "./api";
+import { getEvents, getSessions, getSessionDetail, getConfig } from "./api";
 import TitleBar from "./components/TitleBar.vue";
+import EventList from "./components/EventList.vue";
 import SessionList from "./components/SessionList.vue";
-import HistoryList from "./components/HistoryList.vue";
 import SessionDetail from "./components/SessionDetail.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 
 // ---- 状态 ----
 const currentView = ref<View>("sessions");
 const selectedSessionId = ref<string | null>(null);
+// 事件流会话（hook 日志，实时）
 const sessions = ref<Session[]>([]);
+// 历史会话（Claude Code 原生 transcript），与事件流分开加载
+const historySessions = ref<Session[]>([]);
 const eventsDir = ref("");
-// 选中会话的完整详情（懒加载：列表 sessions 的 messages 为空，点开后单独拉取）
+// 选中会话的完整详情（懒加载：列表的 messages 为空，点开后单独拉取）
 const sessionDetail = ref<Session | null>(null);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let detailLoading = false;
 
 // ---- 数据加载 ----
-async function loadSessions() {
+async function loadEvents() {
   try {
     // lastActivity 保留原始 ISO 时间戳，由各组件按需格式化
-    const data = await getSessions();
+    const data = await getEvents();
     sessions.value = data;
 
     // 保持选中状态：若当前选中会话已消失则清除，否则若未选中则选最紧急的
@@ -37,15 +40,25 @@ async function loadSessions() {
       selectedSessionId.value = firstUrgent ? firstUrgent.id : sessions.value[0].id;
     }
   } catch (e) {
-    console.error("加载会话失败", e);
+    console.error("加载事件流失败", e);
   }
 }
 
 async function loadEventsDir() {
   try {
-    eventsDir.value = await getEventsDir();
+    const cfg = await getConfig();
+    eventsDir.value = cfg.events_dir;
   } catch {
     eventsDir.value = "";
+  }
+}
+
+/** 会话列表（切到历史视图时加载，不参与轮询）。 */
+async function loadHistorySessions() {
+  try {
+    historySessions.value = await getSessions();
+  } catch (e) {
+    console.error("加载历史会话失败", e);
   }
 }
 
@@ -57,9 +70,10 @@ async function loadDetail(id: string) {
     sessionDetail.value = await getSessionDetail(id);
   } catch (e) {
     console.error("加载会话详情失败", e);
-    // 详情加载失败时回退到列表里的概要数据（messages 为空）
-    sessionDetail.value =
-      sessions.value.find((s) => s.id === id) ?? null;
+    // 详情加载失败时回退到当前视图列表里的概要数据（messages 为空）
+    const pool =
+      currentView.value === "history-sessions" ? historySessions.value : sessions.value;
+    sessionDetail.value = pool.find((s) => s.id === id) ?? null;
   } finally {
     detailLoading = false;
   }
@@ -80,15 +94,19 @@ const sortedSessions = computed(() => {
   );
 });
 
-const selectedSession = computed(
-  () =>
-    sessionDetail.value ??
-    (sessions.value.find((s) => s.id === selectedSessionId.value) ?? null)
-);
+const selectedSession = computed(() => {
+  // 详情已懒加载完成则用详情，否则回退当前视图的列表概要
+  if (sessionDetail.value && sessionDetail.value.id === selectedSessionId.value) {
+    return sessionDetail.value;
+  }
+  const pool =
+    currentView.value === "history-sessions" ? historySessions.value : sessions.value;
+  return pool.find((s) => s.id === selectedSessionId.value) ?? null;
+});
 
 const projectGroups = computed(() => {
   const groups: Record<string, Session[]> = {};
-  sessions.value.forEach((s) => {
+  historySessions.value.forEach((s) => {
     if (!groups[s.project]) groups[s.project] = [];
     groups[s.project].push(s);
   });
@@ -117,9 +135,18 @@ function selectSession(session: Session) {
   loadDetail(session.id);
 }
 
+// 切换视图：清空选中与详情；首次进入历史视图时加载历史列表
+watch(currentView, (view) => {
+  selectedSessionId.value = null;
+  sessionDetail.value = null;
+  if (view === "history-sessions" && historySessions.value.length === 0) {
+    loadHistorySessions();
+  }
+});
+
 // ---- 生命周期 ----
 onMounted(() => {
-  loadSessions();
+  loadEvents();
   loadEventsDir();
   // 轮询周期可配置（localStorage 持久化），设置页修改后通过事件通知重新应用
   applyPollTimer();
@@ -150,7 +177,7 @@ function applyPollTimer() {
   }
   const cfg = readPollConfig();
   if (cfg.enabled && cfg.intervalSec > 0) {
-    pollTimer = setInterval(loadSessions, cfg.intervalSec * 1000);
+    pollTimer = setInterval(loadEvents, cfg.intervalSec * 1000);
   }
 }
 </script>
@@ -161,13 +188,13 @@ function applyPollTimer() {
   <div class="main-container">
     <!-- 事件流视图 -->
     <template v-if="currentView === 'sessions'">
-      <SessionList :sessions="sortedSessions" :selected-id="selectedSessionId" @select="selectSession" />
+      <EventList :sessions="sortedSessions" :selected-id="selectedSessionId" @select="selectSession" />
       <SessionDetail :session="selectedSession" empty-text="选择一个会话查看事件流" />
     </template>
 
     <!-- 历史会话视图（聊天记录形式） -->
     <template v-else-if="currentView === 'history-sessions'">
-      <HistoryList :groups="projectGroups" :selected-id="selectedSessionId" @select="selectSession" />
+      <SessionList :groups="projectGroups" :selected-id="selectedSessionId" @select="selectSession" />
       <SessionDetail :session="selectedSession" mode="chat" empty-text="选择一个历史会话查看聊天记录" />
     </template>
 

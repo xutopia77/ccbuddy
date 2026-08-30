@@ -2,26 +2,35 @@
 """
 ccbuddy 一键打包脚本（本地与 GitHub Actions 通用）。
 
-产物输出到固定目录 `dist-release/`，便于 GitHub Actions 上传 Release：
+产物输出到固定目录 `dist-release/`，文件名不带版本号
+（GitHub `releases/latest/download/<文件名>` 地址固定，便于程序自动更新/下载）：
 
   dist-release/
-    ccbuddy-hook-windows-x86_64.exe
+    ccbuddy-hook-windows-x86_64.exe          # hook（各平台）
     ccbuddy-hook-linux-x86_64
     ccbuddy-hook-darwin-x86_64
     ccbuddy-hook-darwin-aarch64
-    ccbuddy-<version>-windows-x86_64.exe      # 主程序（Tauri 安装包）
-    ccbuddy-<version>-linux-x86_64.AppImage    # 主程序（Tauri 安装包）
-    ccbuddy-<version>-darwin-aarch64.dmg       # 主程序（Tauri 安装包）
+    ccbuddy-windows-x86_64-setup.exe         # 主程序安装包
+    ccbuddy-linux-x86_64.AppImage
+    ccbuddy-darwin-aarch64.dmg
+    ccbuddy-windows-x86_64-portable.zip      # 便携包（主程序 + hook，免安装）
+    ccbuddy-linux-x86_64-portable.tar.gz
+    ccbuddy-darwin-aarch64-portable.zip
+    ccbuddy-server-linux-x86_64-musl         # 无头服务端（可选）
 
 用法：
-  python scripts/build.py            # 打包当前平台（主程序 + hook）
+  python scripts/build.py            # 打包当前平台（主程序安装包 + 便携包 + hook）
   python scripts/build.py --hook-only  # 仅构建当前平台的 hook 二进制
+  python scripts/build.py --server     # 额外构建当前平台的 ccbuddy-server
+  python scripts/build.py --server-musl  # Linux musl 静态链接 server
   python scripts/build.py --all      # 尝试构建所有平台 hook（需本机有交叉工具链，CI 不用）
 
 说明：
 - hook 是纯 Rust 二进制（无 GUI 依赖），可交叉编译。
 - Tauri 主程序依赖各平台原生 WebView，无法交叉编译，须在对应平台运行
   （GitHub Actions 用三平台 matrix，本地默认只打当前平台）。
+- 便携包：裸主程序二进制 + 平台命名的 hook，解压即用；hook 与主程序同目录，
+  程序内"一键安装"可直接识别（支持 ccbuddy-hook-<平台>-<架构> 命名）。
 """
 
 import argparse
@@ -53,14 +62,6 @@ def run(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = No
     print(f"[build] {' '.join(cmd)}")
     # Windows 下 npm 是 npm.cmd，需要 shell 解析（命令为本脚本硬编码，无注入风险）
     subprocess.run(cmd, cwd=cwd, check=True, env=env, shell=sys.platform == "win32")
-
-
-def read_version() -> str:
-    """从 tauri.conf.json 读取版本号。"""
-    import json
-
-    conf = json.loads((SRC_TAURI / "tauri.conf.json").read_text(encoding="utf-8"))
-    return conf["version"]
 
 
 def ensure_hook_placeholder() -> None:
@@ -141,40 +142,112 @@ def build_server(target: str | None = None) -> Path | None:
     return bin_dir / name
 
 
+def platform_id() -> tuple[str, str]:
+    """当前平台标识 (plat, arch)，与 Rust 侧 hook_release_file_name 约定一致。"""
+    plat = {"Windows": "windows", "Linux": "linux", "Darwin": "darwin"}[platform.system()]
+    arch = "x86_64" if platform.machine().lower() in ("amd64", "x86_64") else "aarch64"
+    return plat, arch
+
+
 def build_app_current() -> list[Path]:
-    """构建当前平台的 Tauri 主程序（含前端与 hook sidecar），返回安装包产物列表。"""
+    """构建当前平台的 Tauri 主程序（安装包 + 便携包），返回产物路径列表。"""
     run(["npm", "run", "tauri", "build"], cwd=ROOT)
 
-    # Tauri bundle 产物目录：src-tauri/target/release/bundle/
-    bundle_dir = SRC_TAURI / "target" / "release" / "bundle"
-    version = read_version()
+    plat, arch = platform_id()
+    release_dir = SRC_TAURI / "target" / "release"
+    bundle_dir = release_dir / "bundle"
+    hook_name = "ccbuddy-hook.exe" if sys.platform == "win32" else "ccbuddy-hook"
+    hook_release_name = f"ccbuddy-hook-{plat}-{arch}{hook_name.removeprefix('ccbuddy-hook')}"
     artifacts: list[Path] = []
 
     system = platform.system()
     if system == "Windows":
         # NSIS 安装包：bundle/nsis/CCBuddy_0.1.0_x64-setup.exe
         for p in (bundle_dir / "nsis").glob("*-setup.exe"):
-            artifacts.append(p)
+            dest = OUT_DIR / f"ccbuddy-{plat}-{arch}-setup.exe"
+            shutil.copy2(p, dest)
+            artifacts.append(dest)
+        # 便携包：裸主程序 + hook
+        artifacts.append(
+            make_portable_zip(
+                OUT_DIR / f"ccbuddy-{plat}-{arch}-portable.zip",
+                [(release_dir / "ccbuddy.exe", "ccbuddy.exe")],
+                extra_files=[(OUT_DIR / hook_release_name, hook_release_name)],
+            )
+        )
     elif system == "Linux":
-        # AppImage：bundle/appimage/ccbuddy_0.1.0_amd64.AppImage
+        # AppImage：bundle/appimage/ccbuddy_0.1.0_amd64.AppImage（本身即免安装）
         for p in (bundle_dir / "appimage").glob("*.AppImage"):
-            artifacts.append(p)
+            dest = OUT_DIR / f"ccbuddy-{plat}-{arch}.AppImage"
+            shutil.copy2(p, dest)
+            artifacts.append(dest)
+        artifacts.append(
+            make_portable_targz(
+                OUT_DIR / f"ccbuddy-{plat}-{arch}-portable.tar.gz",
+                [(release_dir / "ccbuddy", "ccbuddy")],
+                extra_files=[(OUT_DIR / hook_release_name, hook_release_name)],
+            )
+        )
     elif system == "Darwin":
         # dmg：bundle/dmg/CCBuddy_0.1.0_aarch64.dmg
         for p in (bundle_dir / "dmg").glob("*.dmg"):
-            artifacts.append(p)
+            dest = OUT_DIR / f"ccbuddy-{plat}-{arch}.dmg"
+            shutil.copy2(p, dest)
+            artifacts.append(dest)
+        # 便携包：.app 目录 + hook（ditto 保留符号链接与可执行权限）
+        app_dirs = list((bundle_dir / "macos").glob("*.app"))
+        if app_dirs:
+            artifacts.append(
+                make_portable_zip_darwin(
+                    OUT_DIR / f"ccbuddy-{plat}-{arch}-portable.zip",
+                    app_dirs[0],
+                    extra_files=[(OUT_DIR / hook_release_name, hook_release_name)],
+                )
+            )
 
-    # 统一重命名：ccbuddy-<version>-<platform>-<arch>.<ext>
-    renamed: list[Path] = []
-    plat = {"Windows": "windows", "Linux": "linux", "Darwin": "darwin"}[system]
-    arch = "x86_64" if platform.machine().lower() in ("amd64", "x86_64") else "aarch64"
     for p in artifacts:
-        ext = p.suffix  # .exe / .AppImage / .dmg
-        dest = OUT_DIR / f"ccbuddy-{version}-{plat}-{arch}{ext}"
-        shutil.copy2(p, dest)
-        renamed.append(dest)
-        print(f"[build] app → {dest}")
-    return renamed
+        print(f"[build] app → {p}")
+    return artifacts
+
+
+def make_portable_zip(dest: Path, files: list[tuple[Path, str]], extra_files: list[tuple[Path, str]] = []) -> Path:
+    """Windows 便携包：zip 归档（stdlib，无外部依赖）。"""
+    import zipfile
+
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
+        for src, name in files + extra_files:
+            zf.write(src, name)
+    return dest
+
+
+def make_portable_targz(dest: Path, files: list[tuple[Path, str]], extra_files: list[tuple[Path, str]] = []) -> Path:
+    """Linux 便携包：tar.gz 归档，保留可执行权限。"""
+    import tarfile
+
+    with tarfile.open(dest, "w:gz") as tf:
+        for src, name in files + extra_files:
+            ti = tf.gettarinfo(str(src), arcname=name)
+            ti.mode = 0o755 if src.suffix not in (".json", ".txt") else 0o644
+            with open(src, "rb") as f:
+                tf.addfile(ti, f)
+    return dest
+
+
+def make_portable_zip_darwin(dest: Path, app_dir: Path, extra_files: list[tuple[Path, str]] = []) -> Path:
+    """macOS 便携包：用 ditto 打 zip（保留符号链接/权限）。
+
+    hook 复制进 .app/Contents/MacOS/（与主程序同目录，安装时可被识别），
+    压缩后删除临时副本。
+    """
+    copies: list[Path] = []
+    for src, name in extra_files:
+        target = app_dir / "Contents" / "MacOS" / name
+        shutil.copy2(src, target)
+        copies.append(target)
+    run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app_dir), str(dest)])
+    for c in copies:
+        c.unlink(missing_ok=True)
+    return dest
 
 
 def main() -> None:
@@ -196,11 +269,7 @@ def main() -> None:
 
     # 默认：当前平台主程序 + hook
     hook = build_hook_current()
-    version = read_version()
-    plat = {"Windows": "windows", "Linux": "linux", "Darwin": "darwin", "Java": "unknown"}[
-        platform.system()
-    ]
-    arch = "x86_64" if platform.machine().lower() in ("amd64", "x86_64") else "aarch64"
+    plat, arch = platform_id()
     hook_out = OUT_DIR / f"ccbuddy-hook-{plat}-{arch}{hook.suffix}"
     shutil.copy2(hook, hook_out)
     print(f"[build] hook → {hook_out}")

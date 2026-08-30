@@ -52,11 +52,12 @@ async fn rpc_api(Json(req): Json<RpcRequest>) -> Json<RpcResponse> {
 
 /// 构造 Server 环境上下文：hook 候选源 = 可执行文件同目录。
 fn server_context() -> RpcContext {
-    let hook_name = crate::hook_file_name();
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            candidates.push(dir.join(hook_name));
+            for name in crate::hook_candidate_names() {
+                candidates.push(dir.join(name));
+            }
         }
     }
     RpcContext {

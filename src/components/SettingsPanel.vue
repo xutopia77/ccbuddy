@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from "vue";
-import { installHooks as callInstallHooks, getHookStatus, type HookStatus } from "../api";
+import { installHooks as callInstallHooks, getHookStatus, getConfig, setConfig, type HookStatus } from "../api";
 import type { PollConfig } from "../types";
 
 defineProps<{ eventsDir: string }>();
 
 // ---- hook 状态 ----
 const hookStatus = ref<HookStatus | null>(null);
+const installing = ref(false);
 
 async function refreshHookStatus() {
   try {
@@ -17,12 +18,18 @@ async function refreshHookStatus() {
 }
 
 async function installHooks() {
+  if (installing.value) return;
+  installing.value = true;
   try {
     const msg = await callInstallHooks();
     alert(`✅ ${msg}`);
     await refreshHookStatus();
   } catch (e) {
-    alert(`❌ 安装失败：${e}`);
+    // 后端错误信息含下载地址与离线手动处理步骤
+    const detail = e instanceof Error ? e.message : String(e);
+    alert(`❌ 安装失败：${detail}`);
+  } finally {
+    installing.value = false;
   }
 }
 
@@ -33,6 +40,37 @@ const registeredCount = computed(() => {
   const ok = vals.filter(Boolean).length;
   return `${ok}/${vals.length}`;
 });
+
+// ---- Claude 数据目录（后端配置，~/.ccbuddy/config.json）----
+const claudeDir = ref("");
+const claudeDirSaving = ref(false);
+const claudeDirSaved = ref(false);
+
+async function loadConfig() {
+  try {
+    const cfg = await getConfig();
+    claudeDir.value = cfg.claude_dir;
+  } catch {
+    /* 用默认值 */
+  }
+}
+
+async function saveClaudeDir() {
+  if (claudeDirSaving.value) return;
+  claudeDirSaving.value = true;
+  try {
+    const cfg = await setConfig({ claude_dir: claudeDir.value });
+    claudeDir.value = cfg.claude_dir;
+    claudeDirSaved.value = true;
+    setTimeout(() => (claudeDirSaved.value = false), 1500);
+    // 目录变化会影响 hook 安装位置与注册状态
+    await refreshHookStatus();
+  } catch (e) {
+    alert(`❌ 保存失败：${e}`);
+  } finally {
+    claudeDirSaving.value = false;
+  }
+}
 
 // ---- 轮询设置（纯前端量，localStorage 持久化）----
 const pollEnabled = ref(true);
@@ -70,6 +108,7 @@ const serverUrl = isTauri ? "http://127.0.0.1:8787" : window.location.origin;
 onMounted(() => {
   refreshHookStatus();
   loadPollConfig();
+  loadConfig();
 });
 </script>
 
@@ -97,7 +136,18 @@ onMounted(() => {
         </span>
       </div>
       <div class="setting-row">
-        <button class="btn btn-primary" @click="installHooks">一键安装/更新 Hooks</button>
+        <span class="setting-label">hook 安装来源</span>
+        <span class="setting-value" style="max-width:420px; text-align:right;">
+          安装时优先使用本地 hook（安装包内置 / 便携包同目录 / ~/.ccbuddy/bin），
+          本地没有则自动从 GitHub Release 下载；离线环境可
+          <a :href="hookStatus?.downloadUrl" target="_blank" rel="noopener" style="color: var(--accent);">手动下载</a>
+          后放入 ~/.ccbuddy/bin/
+        </span>
+      </div>
+      <div class="setting-row">
+        <button class="btn btn-primary" :disabled="installing" @click="installHooks">
+          {{ installing ? "安装中（可能正在下载 hook）..." : "一键安装/更新 Hooks" }}
+        </button>
       </div>
     </div>
     <div class="settings-section">
@@ -134,12 +184,29 @@ onMounted(() => {
     <div class="settings-section">
       <h2>数据目录</h2>
       <div class="setting-row">
+        <span class="setting-label">Claude 数据目录</span>
+        <span class="setting-value">
+          <input
+            v-model="claudeDir"
+            placeholder="留空使用默认 ~/.claude"
+            style="width:300px; background:var(--bg-tertiary); border:1px solid var(--border); color:var(--text-primary); padding:4px 8px; border-radius:4px;"
+          />
+          <button class="btn btn-primary" style="margin-left:8px;" :disabled="claudeDirSaving" @click="saveClaudeDir">
+            {{ claudeDirSaving ? "保存中..." : claudeDirSaved ? "已保存" : "保存" }}
+          </button>
+        </span>
+      </div>
+      <div class="setting-row">
         <span class="setting-label">软件数据目录</span>
         <span class="setting-value">~/.ccbuddy/data</span>
       </div>
       <div class="setting-row">
         <span class="setting-label">日志源目录</span>
         <span class="setting-value">{{ eventsDir || '~/.ccbuddy/events' }}</span>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">配置文件</span>
+        <span class="setting-value">~/.ccbuddy/config.json</span>
       </div>
     </div>
   </div>

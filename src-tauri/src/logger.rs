@@ -245,6 +245,22 @@ pub fn set_level(level: Level) {
     }
 }
 
+/// 当前生效的日志等级（未初始化时取全局过滤等级）。
+pub fn current_level() -> Level {
+    // LOGGER 未初始化时读记录器内部等级
+    if let Some(logger) = *LOGGER.lock().unwrap_or_else(|p| p.into_inner()) {
+        return logger.current_level();
+    }
+    match log::max_level() {
+        log::LevelFilter::Error => Level::Error,
+        log::LevelFilter::Warn => Level::Warn,
+        log::LevelFilter::Info => Level::Info,
+        log::LevelFilter::Debug => Level::Debug,
+        log::LevelFilter::Trace => Level::Trace,
+        log::LevelFilter::Off => Level::Info,
+    }
+}
+
 /// 程序启动目录：优先可执行文件所在目录（安装/双击后稳定），获取失败回退当前工作目录。
 fn startup_dir() -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {

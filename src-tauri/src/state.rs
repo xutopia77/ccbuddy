@@ -297,18 +297,14 @@ fn short_time(iso: &str) -> String {
         .unwrap_or_else(|| iso.to_string())
 }
 
-/// 日志源目录：`~/.ccbuddy/events`（设计文档约定，不提供配置项）。
+/// 日志源目录：`~/.ccbuddy/events`（hook 事件流，不提供配置项）。
 pub fn events_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".ccbuddy")
-        .join("events")
+    crate::config::data_root().join("events")
 }
 
-/// Claude 配置目录：`~/.claude`。
+/// Claude 配置目录（用户可在设置页配置，默认 `~/.claude`）。
 pub fn claude_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from(".")).join(".claude")
+    crate::config::claude_dir()
 }
 
 /// 检测 hook 安装/注册状态（设置页展示）。
@@ -358,6 +354,8 @@ pub fn hook_status() -> serde_json::Value {
     serde_json::json!({
         "installed": installed,
         "registered": registered,
+        // hook 手动下载地址（离线环境用，latest release 固定链接）
+        "downloadUrl": crate::hook_download_url(),
     })
 }
 
@@ -372,33 +370,29 @@ fn session_id_from_filename(path: &Path) -> String {
         .to_string()
 }
 
-/// 扫描默认日志目录 + 原生历史会话目录，聚合为会话列表。
+/// 事件流会话列表（hook 日志 `~/.ccbuddy/events`，实时会话，状态由状态机推断）。
 ///
 /// 懒加载：列表只返回概要信息（标题/项目/时间/状态/预览），messages 为空。
-/// 完整消息由 [`load_session_detail`] 在用户点开某个会话时按需解析，
-/// 避免历史会话很多时启动变慢。
+/// 完整消息由 [`load_session_detail`] 在用户点开某个会话时按需解析。
 pub fn load_sessions() -> Vec<SessionInfo> {
-    let mut map: HashMap<String, SessionInfo> = HashMap::new();
+    let mut out = load_sessions_from(&events_dir());
+    out.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+    out
+}
 
-    // 1. 实时 hook 日志（活跃会话，状态由状态机推断，优先级更高）
-    for s in load_sessions_from(&events_dir()) {
-        map.insert(s.id.clone(), s);
-    }
-
-    // 2. 原生历史会话（Claude Code 过去的会话记录，补足历史视图）
-    for s in load_native_sessions() {
-        map.entry(s.id.clone()).or_insert(s);
-    }
-
-    let mut out: Vec<SessionInfo> = map.into_values().collect();
+/// 历史会话列表（Claude Code 原生 transcript，`<claude_dir>/projects/`）。
+///
+/// 与事件流分开：历史界面只取原生数据，不混合 hook 日志。
+pub fn load_history_sessions() -> Vec<SessionInfo> {
+    let mut out = load_native_sessions();
     out.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
     out
 }
 
 /// 按需加载单个会话的完整消息（用户点开会话详情时调用）。
 ///
-/// 优先从原生 transcript（`~/.claude/projects/...`）解析完整消息，
-/// 其次回退到 hook 事件日志（`~/.ccbuddy/events`）。
+/// 来源：优先原生 transcript（`<claude_dir>/projects/...`），
+/// 其次 hook 事件日志（`~/.ccbuddy/events`）——同一会话两边都可能有数据。
 pub fn load_session_detail(session_id: &str) -> Option<SessionInfo> {
     // 1. 原生 transcript（历史会话消息最全）；lazy=false：解析全部消息
     if let Some(path) = native_session_path(session_id) {
@@ -468,10 +462,7 @@ fn load_sessions_from(dir: &Path) -> Vec<SessionInfo> {
 
 /// Claude Code 原生会话目录：`~/.claude/projects/<项目路径编码>/<session-id>.jsonl`。
 fn projects_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".claude")
-        .join("projects")
+    claude_dir().join("projects")
 }
 
 /// 扫描原生历史会话，聚合为会话列表（历史会话统一标记为 completed）。

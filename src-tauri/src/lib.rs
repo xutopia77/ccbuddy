@@ -1,3 +1,4 @@
+mod config;
 mod core;
 mod event;
 mod logger;
@@ -28,19 +29,119 @@ pub fn hook_file_name() -> &'static str {
     }
 }
 
-/// 安装 hook 的共享实现：从候选路径定位 ccbuddy-hook，复制到 `~/.claude/` 并注册 hooks。
-/// GUI（resource_dir + 主程序同目录）与 server（主程序同目录）都会走到这里。
+/// 当前平台标识（与打包脚本命名约定一致）：(platform, arch)。
+pub fn platform_ident() -> (&'static str, &'static str) {
+    let plat = if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "macos") {
+        "darwin"
+    } else {
+        "unknown"
+    };
+    let arch = std::env::consts::ARCH; // x86_64 / aarch64
+    (plat, arch)
+}
+
+/// 当前平台 hook 的发布文件名：`ccbuddy-hook-<platform>-<arch>[.exe]`。
+/// 与打包脚本输出（GitHub Release 附件）命名一致，可用于自动下载。
+pub fn hook_release_file_name() -> String {
+    let (plat, arch) = platform_ident();
+    let ext = if cfg!(windows) { ".exe" } else { "" };
+    format!("ccbuddy-hook-{plat}-{arch}{ext}")
+}
+
+/// hook 的本地候选文件名：标准名 + 平台命名（便携包附带平台命名版本）。
+pub fn hook_candidate_names() -> Vec<String> {
+    vec![hook_file_name().to_string(), hook_release_file_name()]
+}
+
+/// hook 的 GitHub latest release 下载地址（产物名不带版本号，latest 链接固定）。
+pub fn hook_download_url() -> String {
+    let repo = config::load().github_repo;
+    let repo = if repo.is_empty() {
+        default_repo()
+    } else {
+        repo
+    };
+    format!("https://github.com/{repo}/releases/latest/download/{}", hook_release_file_name())
+}
+
+fn default_repo() -> String {
+    "xutopia77/ccbuddy".to_string()
+}
+
+/// 自动下载 hook 到临时文件，返回下载后的路径。
+fn download_hook() -> Result<std::path::PathBuf, String> {
+    use std::io::Read;
+
+    let url = hook_download_url();
+    log::info!("本地未找到 hook，尝试自动下载: {url}");
+
+    let resp = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(60))
+        .call()
+        .map_err(|e| format!("下载失败（离线或网络受限）: {e}\n下载地址: {url}"))?;
+
+    let mut reader = resp
+        .into_reader()
+        .take(64 * 1024 * 1024); // 上限 64MB 防异常响应
+
+    let dst = std::env::temp_dir().join(hook_release_file_name());
+    let mut file = std::fs::File::create(&dst).map_err(|e| format!("创建临时文件失败: {e}"))?;
+    std::io::copy(&mut reader, &mut file).map_err(|e| format!("写入文件失败: {e}"))?;
+
+    // 非Windows 平台需要可执行权限
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o755));
+    }
+
+    log::info!("hook 下载完成: {}", dst.display());
+    Ok(dst)
+}
+
+/// 安装 hook 的共享实现：本地候选 → 自动下载 → 复制到 Claude 目录并注册 hooks。
+/// Claude 目录用户可配置（`~/.ccbuddy/config.json`），默认 `~/.claude`。
 pub fn install_hooks_with(candidates: Vec<std::path::PathBuf>) -> Result<String, String> {
     let hook_name = hook_file_name();
 
-    let hook_src = candidates
-        .into_iter()
-        .find(|p| p.exists())
-        .ok_or_else(|| "未找到 hook 程序 ccbuddy-hook，请重新安装或重新构建".to_string())?;
+    // 本地候选：调用方提供的路径 + ~/.ccbuddy/bin（手动下载的放置位置）
+    let mut all_candidates = candidates;
+    let manual_dir = config::data_root().join("bin");
+    for name in hook_candidate_names() {
+        all_candidates.push(manual_dir.join(&name));
+    }
 
-    // 复制到 ~/.claude/
-    let home = dirs::home_dir().ok_or_else(|| "无法获取用户主目录".to_string())?;
-    let claude_dir = home.join(".claude");
+    // 1. 本地候选（resource_dir / 主程序同目录，标准名或平台命名）
+    let hook_src = all_candidates.into_iter().find(|p| {
+        p.is_file() && p.metadata().map(|m| m.len() > 0).unwrap_or(false)
+    });
+
+    // 2. 本地没有 → 从 GitHub latest release 自动下载
+    let (hook_src, downloaded) = match hook_src {
+        Some(p) => (p, false),
+        None => match download_hook() {
+            Ok(p) => (p, true),
+            Err(e) => {
+                let claude = config::claude_dir();
+                return Err(format!(
+                    "{e}\n\n离线环境请手动处理：\n\
+                     1. 浏览器打开上面的下载地址下载 {}\n\
+                     2. 将文件放到 {} 目录下（或主程序同目录），重新点击安装\n\
+                     3. 或将文件重命名为 {hook_name} 直接放入 {}",
+                    hook_release_file_name(),
+                    config::data_root().join("bin").display(),
+                    claude.display(),
+                ));
+            }
+        },
+    };
+
+    // 复制到 Claude 目录
+    let claude_dir = config::claude_dir();
     std::fs::create_dir_all(&claude_dir).map_err(|e| format!("创建目录失败: {e}"))?;
     let hook_dst = claude_dir.join(hook_name);
     std::fs::copy(&hook_src, &hook_dst).map_err(|e| format!("复制 hook 失败: {e}"))?;
@@ -48,7 +149,16 @@ pub fn install_hooks_with(candidates: Vec<std::path::PathBuf>) -> Result<String,
     // 写 settings.json 注册 hooks
     write_hook_settings(&claude_dir, &hook_dst)?;
 
-    Ok(format!("已安装 hook 并注册到 {}", claude_dir.display()))
+    if downloaded {
+        // 下载的临时文件用完清理
+        let _ = std::fs::remove_file(&hook_src);
+    }
+
+    Ok(format!(
+        "已安装 hook 并注册到 {}{}",
+        claude_dir.display(),
+        if downloaded { "（hook 自动下载完成）" } else { "" }
+    ))
 }
 
 /// 合并写入 `~/.claude/settings.json` 的 hooks 配置，保留原有其他字段。
@@ -102,14 +212,18 @@ mod gui {
 
     /// 构造 GUI 环境上下文：hook 候选源 = resource_dir + 主程序同目录。
     fn build_context(app: &tauri::AppHandle) -> RpcContext {
-        let hook_name = crate::hook_file_name();
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        let names = crate::hook_candidate_names();
         if let Ok(rd) = app.path().resource_dir() {
-            candidates.push(rd.join(hook_name));
+            for name in &names {
+                candidates.push(rd.join(name));
+            }
         }
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
-                candidates.push(dir.join(hook_name));
+                for name in &names {
+                    candidates.push(dir.join(name));
+                }
             }
         }
         RpcContext {
