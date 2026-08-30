@@ -465,6 +465,21 @@ pub fn load_history_sessions() -> Vec<SessionInfo> {
     out
 }
 
+/// 紧急会话（等待确认 / 等待输入 / 出错）的 id 列表（任务栏通知用）。
+#[cfg(feature = "gui")]
+pub fn urgent_session_ids() -> Vec<String> {
+    load_sessions()
+        .into_iter()
+        .filter(|s| {
+            matches!(
+                s.status.as_str(),
+                "waiting_confirmation" | "waiting_input" | "error"
+            )
+        })
+        .map(|s| s.id)
+        .collect()
+}
+
 /// 按需加载事件流会话详情（hook 日志 `~/.ccbuddy/events`，最新 50 条事件）。
 pub fn load_event_detail(session_id: &str) -> Option<SessionInfo> {
     let path = events_dir().join(format!("event-{session_id}.jsonl"));
