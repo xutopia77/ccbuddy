@@ -1,28 +1,14 @@
-// 后端 API 适配层：桌面端（Tauri）走 invoke，浏览器（ccbuddy-server）走 HTTP。
-// 两个环境调用同一组函数，界面代码无感知。
+// 业务 API 层：只面向业务，不接触 Tauri / HTTP。
+// 底层统一 RPC 已在 ipc.ts 中封装，新增后端命令时在此加一个函数即可。
 
-import { invoke } from "@tauri-apps/api/core";
+import { request } from "./ipc";
 import type { Session } from "./types";
 
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+/** 获取会话列表（含 hook 日志实时会话 + 原生历史会话）。 */
+export const getSessions = () => request<Session[]>("get_sessions");
 
-export async function getSessions(): Promise<Session[]> {
-  if (isTauri) return invoke<Session[]>("get_sessions");
-  const r = await fetch("/api/sessions");
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
-}
+/** 获取日志源目录路径。 */
+export const getEventsDir = () => request<string>("get_events_dir");
 
-export async function getEventsDir(): Promise<string> {
-  if (isTauri) return invoke<string>("get_events_dir");
-  const r = await fetch("/api/events_dir");
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.text();
-}
-
-export async function installHooks(): Promise<string> {
-  if (isTauri) return invoke<string>("install_hooks");
-  const r = await fetch("/api/install_hooks", { method: "POST" });
-  if (!r.ok) throw new Error(await r.text());
-  return r.text();
-}
+/** 一键安装 hook（复制 ccbuddy-hook 并注册到 settings.json）。 */
+export const installHooks = () => request<string>("install_hooks");

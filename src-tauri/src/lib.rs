@@ -1,4 +1,6 @@
+mod core;
 mod event;
+mod rpc;
 mod server;
 mod state;
 
@@ -15,14 +17,19 @@ pub fn run_server(addr: &str, assets: &'static include_dir::Dir<'static>) {
     rt.block_on(server::start(addr, assets));
 }
 
-/// 安装 hook 的共享实现：从候选路径定位 ccbuddy-hook，复制到 `~/.claude/` 并注册 hooks。
-/// GUI（resource_dir + 主程序同目录）与 server（主程序同目录）都会走到这里。
-pub fn install_hooks_with(candidates: Vec<std::path::PathBuf>) -> Result<String, String> {
-    let hook_name = if cfg!(windows) {
+/// ccbuddy-hook 可执行文件名（按平台区分）。
+pub fn hook_file_name() -> &'static str {
+    if cfg!(windows) {
         "ccbuddy-hook.exe"
     } else {
         "ccbuddy-hook"
-    };
+    }
+}
+
+/// 安装 hook 的共享实现：从候选路径定位 ccbuddy-hook，复制到 `~/.claude/` 并注册 hooks。
+/// GUI（resource_dir + 主程序同目录）与 server（主程序同目录）都会走到这里。
+pub fn install_hooks_with(candidates: Vec<std::path::PathBuf>) -> Result<String, String> {
+    let hook_name = hook_file_name();
 
     let hook_src = candidates
         .into_iter()
@@ -74,35 +81,26 @@ fn write_hook_settings(claude_dir: &std::path::Path, hook_path: &std::path::Path
 }
 
 /// 桌面 GUI（Tauri）相关代码，仅启用 `gui` feature 时编译。
+///
+/// 这是唯一的 Tauri 适配层：把 Tauri 的 `invoke` 调用桥接到 [`crate::core::dispatch`]。
+/// 业务逻辑全部在 `core` / `state` / `event` 等纯 Rust 模块中，不接触 Tauri。
 #[cfg(feature = "gui")]
 mod gui {
     use tauri::Manager;
 
-    use crate::state;
-    use crate::state::SessionInfo;
+    use crate::core::{self, RpcContext};
+    use crate::rpc::{RpcRequest, RpcResponse};
 
-    /// 返回所有会话（从 `~/.ccbuddy/events` 日志目录解析）。
+    /// 统一 RPC 入口：前端 `invoke("rpc", { payload })` 的唯一落点。
     #[tauri::command]
-    fn get_sessions() -> Vec<SessionInfo> {
-        state::load_sessions()
+    fn rpc(app: tauri::AppHandle, payload: RpcRequest) -> RpcResponse {
+        let ctx = build_context(&app);
+        core::dispatch(&ctx, &payload.cmd, payload.data)
     }
 
-    /// 返回日志源目录路径（供前端/设置页展示）。
-    #[tauri::command]
-    fn get_events_dir() -> String {
-        state::events_dir().to_string_lossy().to_string()
-    }
-
-    /// 一键安装：把 `ccbuddy-hook` 复制到 `~/.claude/`，并在 `settings.json` 注册 hooks。
-    #[tauri::command]
-    fn install_hooks(app: tauri::AppHandle) -> Result<String, String> {
-        let hook_name = if cfg!(windows) {
-            "ccbuddy-hook.exe"
-        } else {
-            "ccbuddy-hook"
-        };
-
-        // 定位 hook 源：resource_dir（release 安装后）→ 主程序同目录（开发时）
+    /// 构造 GUI 环境上下文：hook 候选源 = resource_dir + 主程序同目录。
+    fn build_context(app: &tauri::AppHandle) -> RpcContext {
+        let hook_name = crate::hook_file_name();
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
         if let Ok(rd) = app.path().resource_dir() {
             candidates.push(rd.join(hook_name));
@@ -112,18 +110,16 @@ mod gui {
                 candidates.push(dir.join(hook_name));
             }
         }
-        crate::install_hooks_with(candidates)
+        RpcContext {
+            hook_candidates: candidates,
+        }
     }
 
     #[cfg_attr(mobile, tauri::mobile_entry_point)]
     pub fn run() {
         tauri::Builder::default()
             .plugin(tauri_plugin_opener::init())
-            .invoke_handler(tauri::generate_handler![
-                get_sessions,
-                get_events_dir,
-                install_hooks
-            ])
+            .invoke_handler(tauri::generate_handler![rpc])
             .run(tauri::generate_context!())
             .expect("error while running tauri application");
     }
