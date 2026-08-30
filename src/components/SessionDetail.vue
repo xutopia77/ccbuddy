@@ -230,18 +230,19 @@ function scrollToUser(idx: number) {
         <div class="bottom-spacer"></div>
       </div>
     </template>
-    <div v-else class="empty-state">
-      <span style="font-size:48px;">🗂️</span>
-      <span>{{ emptyText || '选择一个会话查看详情' }}</span>
-    </div>
+    <n-empty
+      v-else
+      :description="emptyText || '选择一个会话查看详情'"
+      style="margin: auto"
+    />
   </div>
 </template>
 
 <style scoped>
-/* ===== 公共：面板基调（VS Code 暗色） ===== */
+/* ===== 公共：面板基调（design token，见 styles/tokens.css） ===== */
 .detail-panel {
   position: relative; /* chat 模式的 session-header 绝对定位锚点 */
-  background: #252526;
+  background: var(--bg-base);
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.6;
@@ -250,8 +251,8 @@ function scrollToUser(idx: number) {
 /* 会话信息头 */
 .session-header {
   padding: 10px 20px;
-  border-bottom: 1px solid #3c3c3c;
-  background: #2d2d30;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -264,7 +265,7 @@ function scrollToUser(idx: number) {
   min-width: 0;
 }
 .session-title {
-  color: #d4d4d4;
+  color: var(--text-1);
   font-weight: bold;
   font-size: 14px;
   white-space: nowrap;
@@ -274,7 +275,7 @@ function scrollToUser(idx: number) {
   min-width: 0;
 }
 .session-path {
-  color: #858585;
+  color: var(--text-2);
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
@@ -283,17 +284,18 @@ function scrollToUser(idx: number) {
   min-width: 0;
 }
 .header-time {
-  color: #858585;
+  color: var(--text-2);
   font-size: 12px;
   flex-shrink: 0;
 }
 .resume-cmd {
   font-family: var(--font-mono);
   font-size: 12px;
-  color: #4ec9b0;
-  background: #1e1e1e;
-  padding: 1px 8px;
-  border-radius: 3px;
+  color: var(--accent-mute);
+  background: var(--bg-code);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -302,18 +304,18 @@ function scrollToUser(idx: number) {
   user-select: text;
 }
 .copy-btn {
-  background: #1e1e1e;
-  border: 1px solid #3c3c3c;
-  color: #9cdcfe;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  color: var(--text-2);
   font-family: var(--font-mono);
   font-size: 12px;
   padding: 2px 10px;
-  border-radius: 3px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   flex-shrink: 0;
   transition: all 0.15s;
 }
-.copy-btn:hover { background: #2a2d2e; border-color: #569cd6; }
+.copy-btn:hover { background: var(--bg-hover); border-color: var(--accent); color: var(--accent-mute); }
 .status-dot {
   width: 10px;
   height: 10px;
@@ -321,13 +323,13 @@ function scrollToUser(idx: number) {
   flex-shrink: 0;
 }
 .status-text {
-  color: #858585;
+  color: var(--text-2);
   font-size: 12px;
 }
 
 /* 展开箭头与详情块（两种模式共用） */
 .expand-arrow {
-  color: #6c6c6c;
+  color: var(--text-3);
   font-size: 11px;
   flex-shrink: 0;
 }
@@ -336,11 +338,11 @@ function scrollToUser(idx: number) {
   padding: 8px 10px;
   font-family: var(--font-mono);
   font-size: 12px;
-  color: #9cdcfe;
-  background: #1e1e1e;
-  border: 1px solid #2a2a2a;
-  border-left: 2px solid #569cd6;
-  border-radius: 3px;
+  color: var(--accent-mute);
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius-sm);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 320px;
@@ -361,13 +363,13 @@ function scrollToUser(idx: number) {
   display: flex;
   justify-content: flex-end;
   padding: 8px 20px 4px;
-  color: #6c6c6c;
+  color: var(--text-3);
   font-size: 12px;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   position: sticky;
   top: 0;
-  background: #252526;
+  background: var(--bg-base);
   z-index: 1;
 }
 .event-list { list-style: none; padding: 4px 0; }
@@ -376,13 +378,13 @@ function scrollToUser(idx: number) {
   align-items: flex-start;
   gap: 10px;
   padding: 5px 20px;
-  border-bottom: 1px solid #2a2a2a;
+  border-bottom: 1px solid var(--border);
   transition: background 0.15s;
 }
-.event-item:hover { background: #2a2d2e; }
+.event-item:hover { background: var(--bg-hover); }
 .event-item.expandable { cursor: pointer; }
 .event-time {
-  color: #858585;
+  color: var(--text-2);
   font-size: 12px;
   min-width: 62px;
   flex-shrink: 0;
@@ -393,7 +395,7 @@ function scrollToUser(idx: number) {
   align-items: center;
   gap: 4px;
   padding: 1px 7px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-size: 11px;
   font-weight: bold;
   min-width: 62px;
@@ -404,30 +406,30 @@ function scrollToUser(idx: number) {
 .icon { font-style: normal; margin-right: 2px; }
 
 .badge-user {
-  background: rgba(220, 160, 60, 0.18);
-  color: #dca03c;
-  border: 1px solid rgba(220, 160, 60, 0.4);
+  background: var(--warning-soft);
+  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
 }
 .badge-msg,
 .badge-tool {
-  background: rgba(86, 156, 214, 0.15);
-  color: #569cd6;
-  border: 1px solid rgba(86, 156, 214, 0.35);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
 }
 .badge-tool-done {
-  background: rgba(106, 186, 112, 0.15);
-  color: #6aba70;
-  border: 1px solid rgba(106, 186, 112, 0.35);
+  background: var(--success-soft);
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 40%, transparent);
 }
 .badge-think {
-  background: rgba(197, 110, 214, 0.15);
-  color: #c56ed6;
-  border: 1px solid rgba(197, 110, 214, 0.35);
+  background: var(--think-soft);
+  color: var(--think);
+  border: 1px solid color-mix(in srgb, var(--think) 40%, transparent);
 }
 .badge-sys {
-  background: rgba(244, 135, 113, 0.15);
-  color: #f48771;
-  border: 1px solid rgba(244, 135, 113, 0.35);
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
 }
 
 .event-content { flex: 1; min-width: 0; }
@@ -438,13 +440,13 @@ function scrollToUser(idx: number) {
   min-width: 0;
 }
 .event-action {
-  color: #cccccc;
+  color: var(--text-1);
   font-size: 13px;
   white-space: nowrap;
   flex-shrink: 0;
 }
 .event-desc {
-  color: #b5b5b5;
+  color: var(--text-2);
   font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
@@ -452,7 +454,7 @@ function scrollToUser(idx: number) {
   flex: 1;
   min-width: 0;
 }
-.event-item:hover .expand-arrow { color: #9cdcfe; }
+.event-item:hover .expand-arrow { color: var(--accent-mute); }
 
 /* ===== 聊天记录模式（历史会话） ===== */
 /* 结构：session-header（正常流）+ 内容行（聊天流 + 右侧输入列表） */
@@ -476,7 +478,7 @@ function scrollToUser(idx: number) {
 /* 定位闪烁提示 */
 @keyframes flash {
   0%, 100% { box-shadow: none; }
-  30% { box-shadow: 0 0 0 3px rgba(86, 156, 214, 0.55); border-radius: 10px; }
+  30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent); border-radius: var(--radius-lg); }
 }
 .flash-target { animation: flash 1.2s ease; }
 
@@ -484,25 +486,25 @@ function scrollToUser(idx: number) {
 .user-inputs-panel {
   width: 220px;
   flex-shrink: 0;
-  border-left: 1px solid #3c3c3c;
-  background: #232326;
+  border-left: 1px solid var(--border);
+  background: var(--bg-surface);
   overflow-y: auto;
 }
 .user-inputs-header {
   padding: 8px 12px;
   font-size: 12px;
-  color: #858585;
-  border-bottom: 1px solid #333;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
-  background: #232326;
+  background: var(--bg-surface);
 }
 .user-input-item {
   padding: 6px 12px;
   font-size: 12px;
-  color: #a8a8a8;
+  color: var(--text-2);
   cursor: pointer;
-  border-bottom: 1px solid #2a2a2a;
+  border-bottom: 1px solid var(--border);
   border-left: 2px solid transparent;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -510,11 +512,11 @@ function scrollToUser(idx: number) {
   overflow: hidden;
   transition: background 0.15s;
 }
-.user-input-item:hover { background: #2a2d2e; color: #d4d4d4; }
+.user-input-item:hover { background: var(--bg-hover); color: var(--text-1); }
 .user-input-item.active {
-  border-left-color: #dca03c;
-  color: #dca03c;
-  background: rgba(220, 160, 60, 0.08);
+  border-left-color: var(--warning);
+  color: var(--warning);
+  background: var(--warning-soft);
 }
 
 /* 聊天气泡 */
@@ -525,28 +527,28 @@ function scrollToUser(idx: number) {
 .chat-bubble {
   max-width: 78%;
   padding: 10px 14px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   font-size: 13px;
   line-height: 1.6;
   word-break: break-word;
   white-space: pre-wrap;
 }
 .chat-msg.user .chat-bubble {
-  background: rgba(86, 156, 214, 0.18);
-  border: 1px solid rgba(86, 156, 214, 0.4);
-  color: #d4d4d4;
-  border-bottom-right-radius: 3px;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--text-1);
+  border-bottom-right-radius: var(--radius-sm);
 }
 .chat-msg.assistant .chat-bubble {
-  background: #1e1e1e;
-  border: 1px solid #3c3c3c;
-  color: #d4d4d4;
-  border-bottom-left-radius: 3px;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  color: var(--text-1);
+  border-bottom-left-radius: var(--radius-sm);
 }
 .chat-msg.system .chat-bubble {
   background: transparent;
-  border: 1px dashed #3c3c3c;
-  color: #858585;
+  border: 1px dashed var(--border-strong);
+  color: var(--text-2);
   font-size: 12px;
   max-width: 100%;
 }
@@ -560,23 +562,23 @@ function scrollToUser(idx: number) {
   align-self: flex-start;
   max-width: 100%;
   padding: 6px 10px;
-  background: #1e1e1e;
-  border: 1px solid #2a2a2a;
-  border-radius: 6px;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: background 0.15s;
 }
-.chat-tool:hover { background: #2a2d2e; }
+.chat-tool:hover { background: var(--bg-hover); }
 .chat-tool .event-detail { flex-basis: 100%; cursor: default; }
 .chat-tool-icon { font-size: 12px; }
 .chat-tool-name {
-  color: #569cd6;
+  color: var(--accent);
   font-size: 12px;
   font-weight: bold;
   flex-shrink: 0;
 }
 .chat-tool-desc {
-  color: #858585;
+  color: var(--text-2);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -584,5 +586,5 @@ function scrollToUser(idx: number) {
   min-width: 0;
   max-width: 500px;
 }
-.chat-tool:hover .expand-arrow { color: #9cdcfe; }
+.chat-tool:hover .expand-arrow { color: var(--accent-mute); }
 </style>

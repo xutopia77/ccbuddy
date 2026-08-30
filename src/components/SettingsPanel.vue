@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from "vue";
+import { useNotification } from "naive-ui";
 import { installHooks as callInstallHooks, getHookStatus, getConfig, setConfig, type HookStatus } from "../api";
 import type { PollConfig } from "../types";
 
 defineProps<{ eventsDir: string }>();
+
+const notification = useNotification();
 
 // ---- hook 状态 ----
 const hookStatus = ref<HookStatus | null>(null);
@@ -22,12 +25,16 @@ async function installHooks() {
   installing.value = true;
   try {
     const msg = await callInstallHooks();
-    alert(`✅ ${msg}`);
+    notification.success({ title: "Hook 安装完成", content: msg, duration: 4000 });
     await refreshHookStatus();
   } catch (e) {
     // 后端错误信息含下载地址与离线手动处理步骤
     const detail = e instanceof Error ? e.message : String(e);
-    alert(`❌ 安装失败：${detail}`);
+    notification.error({
+      title: "安装失败",
+      content: detail,
+      duration: 0, // 含手动处理步骤，不自动消失
+    });
   } finally {
     installing.value = false;
   }
@@ -40,6 +47,7 @@ const registeredCount = computed(() => {
   const ok = vals.filter(Boolean).length;
   return `${ok}/${vals.length}`;
 });
+const allRegistered = computed(() => registeredCount.value === "8/8");
 
 // ---- Claude 数据目录（后端配置，~/.ccbuddy/config.json）----
 const claudeDir = ref("");
@@ -66,7 +74,8 @@ async function saveClaudeDir() {
     // 目录变化会影响 hook 安装位置与注册状态
     await refreshHookStatus();
   } catch (e) {
-    alert(`❌ 保存失败：${e}`);
+    const detail = e instanceof Error ? e.message : String(e);
+    notification.error({ title: "保存失败", content: detail, duration: 5000 });
   } finally {
     claudeDirSaving.value = false;
   }
@@ -115,14 +124,13 @@ onMounted(() => {
 <template>
   <div class="settings-panel">
     <h1>⚙️ CCBuddy 设置</h1>
-    <div class="settings-section">
-      <h2>Hook 配置</h2>
+
+    <n-card title="Hook 配置" size="small" class="settings-card">
       <div class="setting-row">
         <span class="setting-label">Hook Logger 状态</span>
-        <span>
-          <span :class="hookStatus?.installed ? 'status-indicator status-ok' : 'status-indicator status-error'"></span>
+        <n-tag :type="hookStatus?.installed ? 'success' : 'error'" size="small" round>
           {{ hookStatus?.installed ? "已安装" : "未安装" }}
-        </span>
+        </n-tag>
       </div>
       <div class="setting-row">
         <span class="setting-label">可执行文件路径</span>
@@ -130,71 +138,73 @@ onMounted(() => {
       </div>
       <div class="setting-row">
         <span class="setting-label">Claude settings.json 注册</span>
-        <span>
-          <span :class="registeredCount === '8/8' ? 'status-indicator status-ok' : 'status-indicator status-warn'"></span>
+        <n-tag :type="allRegistered ? 'success' : 'warning'" size="small" round>
           {{ registeredCount || "-" }} 个事件已注册
-        </span>
+        </n-tag>
       </div>
       <div class="setting-row">
         <span class="setting-label">hook 安装来源</span>
-        <span class="setting-value" style="max-width:420px; text-align:right;">
+        <span class="setting-value hint-text">
           安装时优先使用本地 hook（安装包内置 / 便携包同目录 / ~/.ccbuddy/bin），
           本地没有则自动从 GitHub Release 下载；离线环境可
-          <a :href="hookStatus?.downloadUrl" target="_blank" rel="noopener" style="color: var(--accent);">手动下载</a>
+          <a :href="hookStatus?.downloadUrl" target="_blank" rel="noopener">手动下载</a>
           后放入 ~/.ccbuddy/bin/
         </span>
       </div>
       <div class="setting-row">
-        <button class="btn btn-primary" :disabled="installing" @click="installHooks">
-          {{ installing ? "安装中（可能正在下载 hook）..." : "一键安装/更新 Hooks" }}
-        </button>
+        <n-button type="primary" size="small" :loading="installing" @click="installHooks">
+          {{ installing ? "正在安装（可能正在下载 hook）..." : "一键安装 / 更新 Hooks" }}
+        </n-button>
       </div>
-    </div>
-    <div class="settings-section">
-      <h2>数据刷新</h2>
+    </n-card>
+
+    <n-card title="数据刷新" size="small" class="settings-card">
       <div class="setting-row">
         <span class="setting-label">周期性获取会话列表</span>
-        <label><input type="checkbox" v-model="pollEnabled" @change="savePollConfig" /> 启用</label>
+        <n-switch v-model:value="pollEnabled" size="small" @update:value="savePollConfig" />
       </div>
       <div class="setting-row">
         <span class="setting-label">获取周期</span>
-        <span>
-          <input
-            type="number"
-            min="1"
-            max="60"
-            v-model.number="pollInterval"
-            @change="savePollConfig"
-            style="width:80px; background:var(--bg-tertiary); border:1px solid var(--border); color:var(--text-primary); padding:4px; border-radius:4px;"
-          /> 秒
-        </span>
+        <n-input-number
+          v-model:value="pollInterval"
+          size="small"
+          :min="1"
+          :max="60"
+          :disabled="!pollEnabled"
+          style="width: 110px"
+          @update:value="savePollConfig"
+        >
+          <template #suffix>秒</template>
+        </n-input-number>
       </div>
-    </div>
-    <div class="settings-section">
-      <h2>服务器</h2>
+    </n-card>
+
+    <n-card title="服务器" size="small" class="settings-card">
       <div class="setting-row">
         <span class="setting-label">Web 访问地址</span>
-        <a :href="serverUrl" target="_blank" rel="noopener" style="color: var(--accent); text-decoration: none;">{{ serverUrl }}</a>
+        <a :href="serverUrl" target="_blank" rel="noopener" class="link">{{ serverUrl }}</a>
       </div>
       <div class="setting-row">
         <span class="setting-label">端口冲突处理</span>
         <span class="setting-value">启动时检测，冲突则报错</span>
       </div>
-    </div>
-    <div class="settings-section">
-      <h2>数据目录</h2>
+    </n-card>
+
+    <n-card title="数据目录" size="small" class="settings-card">
       <div class="setting-row">
         <span class="setting-label">Claude 数据目录</span>
-        <span class="setting-value">
-          <input
-            v-model="claudeDir"
+        <n-input-group style="width: 420px">
+          <n-input
+            v-model:value="claudeDir"
+            size="small"
             placeholder="留空使用默认 ~/.claude"
-            style="width:300px; background:var(--bg-tertiary); border:1px solid var(--border); color:var(--text-primary); padding:4px 8px; border-radius:4px;"
+            clearable
+            @keyup.enter="saveClaudeDir"
           />
-          <button class="btn btn-primary" style="margin-left:8px;" :disabled="claudeDirSaving" @click="saveClaudeDir">
-            {{ claudeDirSaving ? "保存中..." : claudeDirSaved ? "已保存" : "保存" }}
-          </button>
-        </span>
+          <n-button size="small" :loading="claudeDirSaving" @click="saveClaudeDir">
+            {{ claudeDirSaved ? "已保存" : "保存" }}
+          </n-button>
+        </n-input-group>
       </div>
       <div class="setting-row">
         <span class="setting-label">软件数据目录</span>
@@ -202,12 +212,64 @@ onMounted(() => {
       </div>
       <div class="setting-row">
         <span class="setting-label">日志源目录</span>
-        <span class="setting-value">{{ eventsDir || '~/.ccbuddy/events' }}</span>
+        <span class="setting-value">{{ eventsDir || "~/.ccbuddy/events" }}</span>
       </div>
       <div class="setting-row">
         <span class="setting-label">配置文件</span>
         <span class="setting-value">~/.ccbuddy/config.json</span>
       </div>
-    </div>
+    </n-card>
   </div>
 </template>
+
+<style scoped>
+.settings-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px;
+  max-width: 760px;
+  margin: 0 auto; /* 居中，避免面板靠左、滚动条悬在界面中间 */
+  width: 100%;
+}
+.settings-panel h1 {
+  font-size: 18px;
+  margin-bottom: 16px;
+  color: var(--text-1);
+}
+.settings-card {
+  margin-bottom: 16px;
+}
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.setting-row:last-child {
+  border-bottom: none;
+}
+.setting-label {
+  color: var(--text-2);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.setting-value {
+  color: var(--text-1);
+  font-size: 13px;
+  text-align: right;
+}
+.hint-text {
+  max-width: 460px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.hint-text a,
+.link {
+  color: var(--accent);
+  text-decoration: none;
+}
+</style>

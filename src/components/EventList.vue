@@ -32,9 +32,10 @@ defineEmits<{ select: [session: Session] }>();
       </div>
       <div class="session-group-preview">{{ session.preview }}</div>
     </div>
-    <div v-if="sessions.length === 0" class="empty-state" style="padding: 40px 0;">
-      <span style="font-size:48px;">📭</span>
-      <span>暂无会话，等待 Claude Code 产生事件</span>
-    </div>
+    <n-empty
+      v-if="sessions.length === 0"
+      description="暂无会话，等待 Claude Code 产生事件"
+      style="padding: 48px 0"
+    />
   </div>
 </template>

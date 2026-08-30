@@ -1,0 +1,67 @@
+/**
+ * ccbuddy Design Tokens（唯一样式源）
+ *
+ * 全局仅此处定义设计量；组件样式一律引用 token，禁止硬编码色值。
+ * naive-ui 主题（App.vue themeOverrides）与 token 保持同值，
+ * 库组件与自定义视图视觉统一。
+ *
+ * 命名：语义分层
+ *   bg-base     窗口最底层背景
+ *   bg-surface  面板/列表背景
+ *   bg-elevated 卡片/悬浮层/hover
+ *   bg-code     代码块/命令块
+ */
+
+:root {
+  /* ---- 表面 ---- */
+  --bg-base: #0a0f16;
+  --bg-surface: #111823;
+  --bg-elevated: #1a2332;
+  --bg-hover: #212d3f;
+  --bg-code: #0d1420;
+
+  /* ---- 边框 ---- */
+  --border: #263445;
+  --border-strong: #35455c;
+
+  /* ---- 文本 ---- */
+  --text-1: #e2e8f0;
+  --text-2: #94a3b8;
+  --text-3: #64748b;
+
+  /* ---- 品牌色 ---- */
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --accent-soft: rgba(59, 130, 246, 0.15);
+  --accent-mute: #93c5fd;
+
+  /* ---- 语义色（会话状态 / 消息徽标共用） ---- */
+  --success: #10b981;
+  --success-soft: rgba(16, 185, 129, 0.15);
+  --warning: #f59e0b;
+  --warning-soft: rgba(245, 158, 11, 0.15);
+  --danger: #ef4444;
+  --danger-soft: rgba(239, 68, 68, 0.15);
+  --info: #38bdf8;
+  --info-soft: rgba(56, 189, 248, 0.15);
+  --muted: #6b7280;
+  --muted-soft: rgba(107, 114, 128, 0.15);
+  --think: #c084fc;
+  --think-soft: rgba(192, 132, 252, 0.15);
+
+  /* ---- 圆角（统一圆角体系，废弃 VS Code 3px 直角） ---- */
+  --radius-lg: 10px; /* 卡片 / 聊天气泡 / 大面板 */
+  --radius-md: 6px;  /* 按钮 / 输入框 / 折叠条 */
+  --radius-sm: 4px;  /* 徽标 / 代码块 / 小标签 */
+
+  /* ---- 字体 ---- */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", Consolas, monospace;
+
+  /* ---- 间距（4px 栅格） ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+}

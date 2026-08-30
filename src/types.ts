@@ -36,14 +36,14 @@ export interface PollConfig {
 
 export function statusColor(status: SessionStatus): string {
   const map: Record<SessionStatus, string> = {
-    running: "var(--green)",
-    waiting_confirmation: "var(--orange)",
-    waiting_input: "var(--blue)",
-    error: "var(--red)",
-    completed: "var(--gray)",
-    idle: "var(--text-muted)",
+    running: "var(--success)",
+    waiting_confirmation: "var(--warning)",
+    waiting_input: "var(--info)",
+    error: "var(--danger)",
+    completed: "var(--muted)",
+    idle: "var(--text-3)",
   };
-  return map[status] ?? "var(--gray)";
+  return map[status] ?? "var(--muted)";
 }
 
 export function statusLabel(status: SessionStatus): string {
