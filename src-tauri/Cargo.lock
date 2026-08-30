@@ -488,6 +488,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tokio",
  "ureq",
+ "windows",
 ]
 
 [[package]]

@@ -2,6 +2,8 @@ mod config;
 mod core;
 mod event;
 mod logger;
+#[cfg(feature = "gui")]
+mod notify;
 mod rpc;
 mod server;
 mod state;
@@ -202,6 +204,7 @@ mod gui {
     use tauri::Manager;
 
     use crate::core::{self, RpcContext};
+    use crate::notify;
     use crate::rpc::{RpcRequest, RpcResponse};
 
     /// 统一 RPC 入口：前端 `invoke("rpc", { payload })` 的唯一落点。
@@ -239,6 +242,38 @@ mod gui {
         let _ = crate::logger::init(logdefault);
         tauri::Builder::default()
             .plugin(tauri_plugin_opener::init())
+            .setup(|app| {
+                // 任务栏通知状态（已读 / 已闪烁集合）
+                app.manage(notify::NotifyState::default());
+
+                // 后台每 2s 轮询事件流目录（不依赖前端页面），驱动任务栏角标与闪烁
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut tick = tokio::time::interval(notify::POLL_INTERVAL);
+                    loop {
+                        tick.tick().await;
+                        // 事件解析是阻塞 IO，放到阻塞线程池执行
+                        let urgent = tauri::async_runtime::spawn_blocking(
+                            crate::state::urgent_session_ids,
+                        )
+                        .await
+                        .unwrap_or_default();
+                        notify::poll(&handle, urgent);
+                    }
+                });
+                Ok(())
+            })
+            .on_window_event(|window, event| {
+                // 打开软件恢复常态：聚焦时清空角标 + 当前紧急会话记入已读 + 清空已闪烁集合
+                if let tauri::WindowEvent::Focused(focused) = event {
+                    let app = window.app_handle();
+                    let state = app.state::<notify::NotifyState>();
+                    state.set_focused(*focused);
+                    if *focused {
+                        notify::on_focus(app);
+                    }
+                }
+            })
             .invoke_handler(tauri::generate_handler![rpc])
             .run(tauri::generate_context!())
             .expect("error while running tauri application");

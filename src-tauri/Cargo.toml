@@ -9,7 +9,7 @@ default-run = "ccbuddy"
 [features]
 # 桌面 GUI（Tauri）。服务器等无桌面环境构建 ccbuddy-server 时用 --no-default-features 关闭。
 default = ["gui"]
-gui = ["tauri", "tauri-plugin-opener"]
+gui = ["tauri", "tauri-plugin-opener", "windows"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -31,10 +31,20 @@ log = { version = "0.4", features = ["std"] }
 dirs = "6"
 chrono = { version = "0.4", features = ["serde"] }
 axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
 include_dir = "0.7"
 # hook 自动下载（GitHub latest release），轻量同步 HTTP 客户端
 ureq = "2"
+
+# 任务栏通知（overlay 角标 / FlashWindowEx），仅桌面端使用
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [[bin]]
 name = "ccbuddy"
