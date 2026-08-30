@@ -164,8 +164,9 @@ pub fn install_hooks_with(candidates: Vec<std::path::PathBuf>) -> Result<String,
 /// 合并写入 `~/.claude/settings.json` 的 hooks 配置，保留原有其他字段。
 fn write_hook_settings(claude_dir: &std::path::Path, hook_path: &std::path::Path) -> Result<(), String> {
     let settings_path = claude_dir.join("settings.json");
-    // Windows 上 hook command 由 Git Bash 执行，正斜杠路径更可靠（避免反斜杠转义问题）
-    let command = hook_path.to_string_lossy().replace('\\', "/");
+    // Windows 上 hook command 由 Git Bash 执行，正斜杠路径更可靠（避免反斜杠转义问题）；
+    // 路径加双引号，避免用户名等含空格时 shell 无法执行
+    let command = format!("\"{}\"", hook_path.to_string_lossy().replace('\\', "/"));
 
     // 读取现有配置；若含注释（jsonc）无法解析，则先备份原文件再覆盖
     let (mut root, backed_up) = match std::fs::read_to_string(&settings_path) {
@@ -286,9 +287,17 @@ fn merge_hooks(map: &mut serde_json::Map<String, Value>, command: &str) {
     }
 }
 
-/// 判断一个 hook entry 是否已指向指定 command（兼容扁平与三层两种格式）。
+/// 去掉 command 首尾引号（新写入带引号，旧注册可能不带，比较时统一归一）。
+fn normalized_command(s: &str) -> &str {
+    s.trim().trim_matches('"')
+}
+
+/// 判断一个 hook entry 是否已指向指定 command（兼容扁平与三层两种格式，
+/// 及带引号/不带引号两种写法）。
 pub fn entry_has_command(entry: &Value, command: &str) -> bool {
-    if entry.get("command").and_then(|v| v.as_str()) == Some(command) {
+    let want = normalized_command(command);
+    let hit = |c: Option<&str>| c.map(normalized_command) == Some(want);
+    if hit(entry.get("command").and_then(|v| v.as_str())) {
         return true;
     }
     entry
@@ -296,7 +305,7 @@ pub fn entry_has_command(entry: &Value, command: &str) -> bool {
         .and_then(|v| v.as_array())
         .map(|hs| {
             hs.iter()
-                .any(|h| h.get("command").and_then(|v| v.as_str()) == Some(command))
+                .any(|h| hit(h.get("command").and_then(|v| v.as_str())))
         })
         .unwrap_or(false)
 }
@@ -358,5 +367,24 @@ mod tests {
 
         let pre = map["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(pre.len(), 1, "相同 command 不应重复添加");
+    }
+
+    #[test]
+    fn merge_hooks_dedupes_quoted_vs_bare() {
+        // 旧版注册为裸路径，新版写入带引号：视为同一条，不重复添加
+        let mut map = serde_json::Map::new();
+        map.insert(
+            "hooks".to_string(),
+            json!({
+                "PreToolUse": [
+                    { "matcher": "*", "hooks": [{ "type": "command", "command": "C:/Users/John Doe/.claude/ccbuddy-hook.exe" }] }
+                ]
+            }),
+        );
+
+        merge_hooks(&mut map, "\"C:/Users/John Doe/.claude/ccbuddy-hook.exe\"");
+
+        let pre = map["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(pre.len(), 1, "带引号与裸路径应视为同一 command");
     }
 }

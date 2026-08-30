@@ -32,7 +32,6 @@ dirs = "6"
 chrono = { version = "0.4", features = ["serde"] }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
-tower-http = { version = "0.6", features = ["fs"] }
 include_dir = "0.7"
 # hook 自动下载（GitHub latest release），轻量同步 HTTP 客户端
 ureq = "2"

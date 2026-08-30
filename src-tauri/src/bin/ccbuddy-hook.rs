@@ -13,7 +13,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
-use chrono::Utc;
+use chrono::Local;
 use serde_json::{json, Value};
 
 fn main() {
@@ -47,10 +47,10 @@ fn main() {
         .unwrap_or("unknown")
         .to_string();
 
-    // 4. 构造包装对象
-    let now = Utc::now();
+    // 4. 构造包装对象（本地时间，带时区偏移；解析端按 RFC3339 归一为本地显示）
+    let now = Local::now();
     let entry = json!({
-        "received_at": now.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        "received_at": now.format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string(),
         "hook_event": hook_event,
         "payload": payload,
     });

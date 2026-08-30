@@ -119,7 +119,7 @@ impl SessionAgg {
 
     /// 根据一个事件推进状态机。
     fn apply(&mut self, ev: &Event) {
-        self.last_activity = ev.received_at.clone();
+        self.last_activity = to_local_iso(&ev.received_at);
 
         if let Some(cwd) = &ev.cwd {
             self.cwd = cwd.clone();
@@ -131,6 +131,9 @@ impl SessionAgg {
                 self.status = SessionStatus::Idle;
             }
             "UserPromptSubmit" => {
+                // 新一轮 prompt 开始：重置上一轮的错误状态，避免 error 粘滞到会话结束
+                self.has_error = false;
+                self.status = SessionStatus::Running;
                 if let Some(prompt) = ev.prompt() {
                     if !is_system_marker(&prompt) {
                         if self.title.is_empty() {
@@ -145,9 +148,6 @@ impl SessionAgg {
                             tool_call: None,
                         });
                     }
-                }
-                if self.status != SessionStatus::Error {
-                    self.status = SessionStatus::Running;
                 }
             }
             "PreToolUse" => {
@@ -303,6 +303,21 @@ fn is_system_marker(s: &str) -> bool {
     ]
     .iter()
     .any(|p| t.starts_with(p))
+}
+
+/// 把 ISO 时间戳（UTC "Z" 或带偏移的本地时间）归一为本地时区时间。
+///
+/// hook 日志新格式为本地时间（带偏移），旧格式为 UTC；原生 transcript 为 UTC。
+/// 统一转为本地时间后，字符串排序与 HH:MM 截取（`short_time`）才正确。
+/// 解析失败时原样返回（容忍脏数据）。
+fn to_local_iso(iso: &str) -> String {
+    match chrono::DateTime::parse_from_rfc3339(iso) {
+        Ok(dt) => dt
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%dT%H:%M:%S%.3f%:z")
+            .to_string(),
+        Err(_) => iso.to_string(),
+    }
 }
 
 /// 从 ISO 时间戳提取 HH:MM 短格式。
@@ -615,7 +630,7 @@ fn parse_native_session(path: &Path, lazy: bool) -> Option<SessionInfo> {
         };
 
         if let Some(ts) = v.get("timestamp").and_then(|x| x.as_str()) {
-            last_activity = ts.to_string();
+            last_activity = to_local_iso(ts);
         }
         if cwd.is_empty() {
             if let Some(c) = v.get("cwd").and_then(|x| x.as_str()) {
