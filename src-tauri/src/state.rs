@@ -56,6 +56,8 @@ pub struct SessionInfo {
     pub last_activity: String,
     pub preview: String,
     pub unread: bool,
+    /// 消息列表。列表查询（懒加载）时为空，由 `get_session_detail` 按需填充。
+    #[serde(default)]
     pub messages: Vec<Message>,
 }
 
@@ -303,6 +305,62 @@ pub fn events_dir() -> PathBuf {
         .join("events")
 }
 
+/// Claude 配置目录：`~/.claude`。
+pub fn claude_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from(".")).join(".claude")
+}
+
+/// 检测 hook 安装/注册状态（设置页展示）。
+///
+/// 返回 JSON：`{ installed: bool, registered: { <事件名>: bool, ... } }`
+/// - installed：`~/.claude/ccbuddy-hook[.exe]` 可执行文件存在
+/// - registered：`settings.json` 的 hooks.<事件> 下存在指向该 hook 的 command
+pub fn hook_status() -> serde_json::Value {
+    let hook_name = crate::hook_file_name();
+    let claude = claude_dir();
+    let installed = claude.join(hook_name).is_file();
+
+    let mut registered = serde_json::Map::new();
+    let settings = claude.join("settings.json");
+    let root: serde_json::Value = std::fs::read_to_string(&settings)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(serde_json::Value::Null);
+
+    let command = claude
+        .join(hook_name)
+        .to_string_lossy()
+        .replace('\\', "/");
+    if let Some(hooks) = root.get("hooks").and_then(|h| h.as_object()) {
+        for ev in [
+            "PreToolUse",
+            "PostToolUse",
+            "Notification",
+            "UserPromptSubmit",
+            "Stop",
+            "SubagentStop",
+            "SessionStart",
+            "SessionEnd",
+        ] {
+            let hit = hooks
+                .get(ev)
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .any(|e| crate::entry_has_command(e, &command))
+                })
+                .unwrap_or(false);
+            registered.insert(ev.to_string(), serde_json::Value::Bool(hit));
+        }
+    }
+
+    serde_json::json!({
+        "installed": installed,
+        "registered": registered,
+    })
+}
+
 /// 从文件名 `event-<session_id>.jsonl` 提取 session_id。
 fn session_id_from_filename(path: &Path) -> String {
     path.file_name()
@@ -315,6 +373,10 @@ fn session_id_from_filename(path: &Path) -> String {
 }
 
 /// 扫描默认日志目录 + 原生历史会话目录，聚合为会话列表。
+///
+/// 懒加载：列表只返回概要信息（标题/项目/时间/状态/预览），messages 为空。
+/// 完整消息由 [`load_session_detail`] 在用户点开某个会话时按需解析，
+/// 避免历史会话很多时启动变慢。
 pub fn load_sessions() -> Vec<SessionInfo> {
     let mut map: HashMap<String, SessionInfo> = HashMap::new();
 
@@ -331,6 +393,43 @@ pub fn load_sessions() -> Vec<SessionInfo> {
     let mut out: Vec<SessionInfo> = map.into_values().collect();
     out.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
     out
+}
+
+/// 按需加载单个会话的完整消息（用户点开会话详情时调用）。
+///
+/// 优先从原生 transcript（`~/.claude/projects/...`）解析完整消息，
+/// 其次回退到 hook 事件日志（`~/.ccbuddy/events`）。
+pub fn load_session_detail(session_id: &str) -> Option<SessionInfo> {
+    // 1. 原生 transcript（历史会话消息最全）；lazy=false：解析全部消息
+    if let Some(path) = native_session_path(session_id) {
+        if let Some(info) = parse_native_session(&path, false) {
+            return Some(info);
+        }
+    }
+
+    // 2. hook 事件日志（实时会话）
+    let dir = events_dir();
+    if dir.join(format!("event-{session_id}.jsonl")).exists() {
+        let sessions = load_sessions_from(&dir);
+        return sessions.into_iter().find(|s| s.id == session_id);
+    }
+
+    None
+}
+
+/// 在 `~/.claude/projects/` 下查找会话对应的 transcript 文件路径。
+fn native_session_path(session_id: &str) -> Option<PathBuf> {
+    let dir = projects_dir();
+    let Ok(project_dirs) = std::fs::read_dir(&dir) else {
+        return None;
+    };
+    for project_dir in project_dirs.flatten() {
+        let path = project_dir.path().join(format!("{session_id}.jsonl"));
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    None
 }
 
 /// 扫描指定目录，解析所有事件，聚合为会话列表。
@@ -376,6 +475,8 @@ fn projects_dir() -> PathBuf {
 }
 
 /// 扫描原生历史会话，聚合为会话列表（历史会话统一标记为 completed）。
+///
+/// 概要模式（lazy=true）：不收集消息，只为列表提供标题/项目/时间/预览。
 fn load_native_sessions() -> Vec<SessionInfo> {
     let dir = projects_dir();
     let mut result = Vec::new();
@@ -396,7 +497,8 @@ fn load_native_sessions() -> Vec<SessionInfo> {
             if fp.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                 continue;
             }
-            if let Some(info) = parse_native_session(&fp) {
+            // lazy=true：列表概要模式，不收集消息（详情由 get_session_detail 按需解析）
+            if let Some(info) = parse_native_session(&fp, true) {
                 result.push(info);
             }
         }
@@ -405,7 +507,10 @@ fn load_native_sessions() -> Vec<SessionInfo> {
 }
 
 /// 解析单个原生会话文件（Claude Code 的 transcript .jsonl）。
-fn parse_native_session(path: &Path) -> Option<SessionInfo> {
+///
+/// `lazy = true`：概要模式（列表用），只提取标题/项目/时间/预览，不收集消息；
+/// `false`：解析全部消息（用户点开会话详情时）。
+fn parse_native_session(path: &Path, lazy: bool) -> Option<SessionInfo> {
     let session_id = path.file_stem()?.to_string_lossy().to_string();
     let content = std::fs::read_to_string(path).ok()?;
 
@@ -453,12 +558,14 @@ fn parse_native_session(path: &Path) -> Option<SessionInfo> {
                     ai_title = s.to_string();
                 }
             }
-            "user" => parse_user_line(&v, &last_activity, &mut title, &mut preview, &mut messages),
-            "assistant" => parse_assistant_line(&v, &last_activity, &mut preview, &mut messages),
+            "user" => parse_user_line(&v, &last_activity, &mut title, &mut preview, &mut messages, lazy),
+            "assistant" => parse_assistant_line(&v, &last_activity, &mut preview, &mut messages, lazy),
             "system" => {
                 if let Some(c) = v.get("content") {
                     if let Some(text) = content_to_text(c) {
-                        messages.push(raw_message("system", "system", &text, &last_activity, None));
+                        if !lazy {
+                            messages.push(raw_message("system", "system", &text, &last_activity, None));
+                        }
                     }
                 }
             }
@@ -520,6 +627,7 @@ fn parse_user_line(
     title: &mut String,
     preview: &mut String,
     messages: &mut Vec<Message>,
+    lazy: bool,
 ) {
     let Some(msg) = v.get("message") else { return };
     let Some(content) = msg.get("content") else { return };
@@ -531,13 +639,15 @@ fn parse_user_line(
                 *title = truncate(s, 40);
             }
             *preview = truncate(s, 80);
-            messages.push(raw_message(
-                if is_marker { "system" } else { "user" },
-                if is_marker { "system" } else { "user" },
-                s,
-                time,
-                None,
-            ));
+            if !lazy {
+                messages.push(raw_message(
+                    if is_marker { "system" } else { "user" },
+                    if is_marker { "system" } else { "user" },
+                    s,
+                    time,
+                    None,
+                ));
+            }
         }
         serde_json::Value::Array(blocks) => {
             for block in blocks {
@@ -546,7 +656,9 @@ fn parse_user_line(
                         if let Some(c) = block.get("content") {
                             if let Some(text) = content_to_text(c) {
                                 *preview = truncate(&text, 80);
-                                messages.push(raw_message("tool_result", "assistant", &text, time, None));
+                                if !lazy {
+                                    messages.push(raw_message("tool_result", "assistant", &text, time, None));
+                                }
                             }
                         }
                     }
@@ -556,7 +668,9 @@ fn parse_user_line(
                                 *title = truncate(&text, 40);
                             }
                             *preview = truncate(&text, 80);
-                            messages.push(raw_message("user", "user", &text, time, None));
+                            if !lazy {
+                                messages.push(raw_message("user", "user", &text, time, None));
+                            }
                         }
                     }
                     _ => {}
@@ -577,6 +691,7 @@ fn parse_assistant_line(
     time: &str,
     preview: &mut String,
     messages: &mut Vec<Message>,
+    lazy: bool,
 ) {
     let Some(msg) = v.get("message") else { return };
     let Some(content) = msg.get("content") else { return };
@@ -584,7 +699,9 @@ fn parse_assistant_line(
     match content {
         serde_json::Value::String(s) => {
             *preview = truncate(s, 80);
-            messages.push(raw_message("assistant", "assistant", s, time, None));
+            if !lazy {
+                messages.push(raw_message("assistant", "assistant", s, time, None));
+            }
         }
         serde_json::Value::Array(blocks) => {
             for block in blocks {
@@ -592,36 +709,44 @@ fn parse_assistant_line(
                     Some("text") => {
                         if let Some(t) = block.get("text").and_then(|x| x.as_str()) {
                             *preview = truncate(t, 80);
-                            messages.push(raw_message("assistant", "assistant", t, time, None));
+                            if !lazy {
+                                messages.push(raw_message("assistant", "assistant", t, time, None));
+                            }
                         }
                     }
                     Some("thinking") => {
-                        if let Some(t) = block.get("thinking").and_then(|x| x.as_str()) {
-                            messages.push(raw_message("thinking", "assistant", t, time, None));
+                        if !lazy {
+                            if let Some(t) = block.get("thinking").and_then(|x| x.as_str()) {
+                                messages.push(raw_message("thinking", "assistant", t, time, None));
+                            }
                         }
                     }
                     Some("tool_use") => {
-                        let name = block
-                            .get("name")
-                            .and_then(|x| x.as_str())
-                            .unwrap_or("工具")
-                            .to_string();
-                        let input = block
-                            .get("input")
-                            .map(|i| i.to_string())
-                            .filter(|s| s != "null" && !s.is_empty())
-                            .unwrap_or_default();
-                        let content = if input.is_empty() {
-                            format!("调用工具 {name}")
-                        } else {
-                            format!("调用工具 {name}\n{input}")
-                        };
-                        messages.push(raw_message("tool_use", "assistant", &content, time, Some(name)));
+                        if !lazy {
+                            let name = block
+                                .get("name")
+                                .and_then(|x| x.as_str())
+                                .unwrap_or("工具")
+                                .to_string();
+                            let input = block
+                                .get("input")
+                                .map(|i| i.to_string())
+                                .filter(|s| s != "null" && !s.is_empty())
+                                .unwrap_or_default();
+                            let content = if input.is_empty() {
+                                format!("调用工具 {name}")
+                            } else {
+                                format!("调用工具 {name}\n{input}")
+                            };
+                            messages.push(raw_message("tool_use", "assistant", &content, time, Some(name)));
+                        }
                     }
                     Some("tool_result") => {
-                        if let Some(c) = block.get("content") {
-                            if let Some(text) = content_to_text(c) {
-                                messages.push(raw_message("tool_result", "assistant", &text, time, None));
+                        if !lazy {
+                            if let Some(c) = block.get("content") {
+                                if let Some(text) = content_to_text(c) {
+                                    messages.push(raw_message("tool_result", "assistant", &text, time, None));
+                                }
                             }
                         }
                     }

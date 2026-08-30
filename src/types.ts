@@ -28,6 +28,12 @@ export interface Session {
 
 export type View = "sessions" | "history-sessions" | "settings";
 
+/** 会话列表轮询配置（纯前端量，localStorage 持久化）。 */
+export interface PollConfig {
+  enabled: boolean;
+  intervalSec: number;
+}
+
 export function statusColor(status: SessionStatus): string {
   const map: Record<SessionStatus, string> = {
     running: "var(--green)",

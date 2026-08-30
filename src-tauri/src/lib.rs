@@ -119,7 +119,9 @@ mod gui {
 
     #[cfg_attr(mobile, tauri::mobile_entry_point)]
     pub fn run() {
-        let _ = crate::logger::init(crate::logger::Config::default());
+        let mut logdefault = crate::logger::Config::default();
+        logdefault.level = crate::logger::Level::Debug;
+        let _ = crate::logger::init(logdefault);
         tauri::Builder::default()
             .plugin(tauri_plugin_opener::init())
             .invoke_handler(tauri::generate_handler![rpc])
@@ -171,7 +173,7 @@ fn merge_hooks(map: &mut serde_json::Map<String, Value>, command: &str) {
 }
 
 /// 判断一个 hook entry 是否已指向指定 command（兼容扁平与三层两种格式）。
-fn entry_has_command(entry: &Value, command: &str) -> bool {
+pub fn entry_has_command(entry: &Value, command: &str) -> bool {
     if entry.get("command").and_then(|v| v.as_str()) == Some(command) {
         return true;
     }

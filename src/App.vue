@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from "vue";
-import type { Session, SessionStatus, View } from "./types";
-import { getSessions, getEventsDir } from "./api";
+import type { Session, SessionStatus, View, PollConfig } from "./types";
+import { getSessions, getSessionDetail, getEventsDir } from "./api";
 import TitleBar from "./components/TitleBar.vue";
 import SessionList from "./components/SessionList.vue";
 import HistoryList from "./components/HistoryList.vue";
@@ -13,8 +13,11 @@ const currentView = ref<View>("sessions");
 const selectedSessionId = ref<string | null>(null);
 const sessions = ref<Session[]>([]);
 const eventsDir = ref("");
+// 选中会话的完整详情（懒加载：列表 sessions 的 messages 为空，点开后单独拉取）
+const sessionDetail = ref<Session | null>(null);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let detailLoading = false;
 
 // ---- 数据加载 ----
 async function loadSessions() {
@@ -46,6 +49,22 @@ async function loadEventsDir() {
   }
 }
 
+// ---- 懒加载详情 ----
+async function loadDetail(id: string) {
+  if (detailLoading) return;
+  detailLoading = true;
+  try {
+    sessionDetail.value = await getSessionDetail(id);
+  } catch (e) {
+    console.error("加载会话详情失败", e);
+    // 详情加载失败时回退到列表里的概要数据（messages 为空）
+    sessionDetail.value =
+      sessions.value.find((s) => s.id === id) ?? null;
+  } finally {
+    detailLoading = false;
+  }
+}
+
 // ---- 计算属性 ----
 const sortedSessions = computed(() => {
   const priority: Record<SessionStatus, number> = {
@@ -62,7 +81,9 @@ const sortedSessions = computed(() => {
 });
 
 const selectedSession = computed(
-  () => sessions.value.find((s) => s.id === selectedSessionId.value) ?? null
+  () =>
+    sessionDetail.value ??
+    (sessions.value.find((s) => s.id === selectedSessionId.value) ?? null)
 );
 
 const projectGroups = computed(() => {
@@ -91,18 +112,47 @@ function countByStatus(status: SessionStatus): number {
 function selectSession(session: Session) {
   selectedSessionId.value = session.id;
   session.unread = false;
+  // 懒加载：点开时才解析该会话的完整 jsonl
+  sessionDetail.value = null;
+  loadDetail(session.id);
 }
 
 // ---- 生命周期 ----
 onMounted(() => {
   loadSessions();
   loadEventsDir();
-  pollTimer = setInterval(loadSessions, 2000);
+  // 轮询周期可配置（localStorage 持久化），设置页修改后通过事件通知重新应用
+  applyPollTimer();
+  window.addEventListener("ccbuddy:poll-config-changed", applyPollTimer);
 });
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer);
+  window.removeEventListener("ccbuddy:poll-config-changed", applyPollTimer);
 });
+
+/** 读取用户配置的轮询周期（秒），默认 2。 */
+function readPollConfig(): PollConfig {
+  try {
+    const raw = localStorage.getItem("ccbuddy.poll");
+    if (raw) return JSON.parse(raw) as PollConfig;
+  } catch {
+    /* 配置损坏时回退默认 */
+  }
+  return { enabled: true, intervalSec: 2 };
+}
+
+/** 应用轮询配置：切换或停止定时器。 */
+function applyPollTimer() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  const cfg = readPollConfig();
+  if (cfg.enabled && cfg.intervalSec > 0) {
+    pollTimer = setInterval(loadSessions, cfg.intervalSec * 1000);
+  }
+}
 </script>
 
 <template>

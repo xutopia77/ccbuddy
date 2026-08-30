@@ -34,10 +34,21 @@ pub fn dispatch(ctx: &RpcContext, cmd: &str, data: Value) -> RpcResponse {
 /// 命令路由表：新增命令在此添加分支。
 fn handle(ctx: &RpcContext, cmd: &str, data: Value) -> Result<Value, AppError> {
     match cmd {
-        // 会话列表（含 hook 日志实时会话 + 原生历史会话）
+        // 会话列表（含 hook 日志实时会话 + 原生历史会话）；懒加载，messages 为空
         "get_sessions" => Ok(json!(crate::state::load_sessions())),
+        // 单个会话的完整消息（用户点开详情时按需解析 jsonl）
+        "get_session_detail" => {
+            let id = data
+                .as_str()
+                .ok_or_else(|| AppError::bad_request("会话 id 需为字符串"))?;
+            crate::state::load_session_detail(id)
+                .map(|s| json!(s))
+                .ok_or_else(|| AppError::not_found(format!("会话不存在: {id}")))
+        }
         // 日志源目录路径
         "get_events_dir" => Ok(json!(crate::state::events_dir().to_string_lossy().to_string())),
+        // hook 安装/注册状态（设置页展示）
+        "get_hook_status" => Ok(crate::state::hook_status()),
         // 一键安装 hook
         "install_hooks" => {
             let msg = crate::install_hooks_with(ctx.hook_candidates.clone())
