@@ -188,13 +188,14 @@ function scrollToUser(idx: number) {
           <aside v-if="userInputs.length > 0" class="user-inputs-panel">
             <div class="user-inputs-header">用户输入 {{ userInputs.length }}</div>
             <div
-              v-for="{ msg, idx } in userInputs"
+              v-for="({ msg, idx }, i) in userInputs"
               :key="idx"
               class="user-input-item"
               :class="{ active: activeUserIdx === idx }"
               @click="scrollToUser(idx)"
             >
-              {{ summarize(msg, 40) }}
+              <span class="user-input-idx">{{ i + 1 }}</span>
+              <span class="user-input-text">{{ summarize(msg, 40) }}</span>
             </div>
           </aside>
         </div>
@@ -482,41 +483,66 @@ function scrollToUser(idx: number) {
 }
 .flash-target { animation: flash 1.2s ease; }
 
-/* 右侧用户输入快速定位面板 */
+/* 右侧用户输入快速定位面板（Naive UI 风格：圆角卡片列表项） */
 .user-inputs-panel {
   width: 220px;
   flex-shrink: 0;
   border-left: 1px solid var(--border);
   background: var(--bg-surface);
   overflow-y: auto;
+  padding: 10px 10px 12px;
+  font-family: var(--font-sans);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .user-inputs-header {
-  padding: 8px 12px;
+  padding: 0 4px 2px;
   font-size: 12px;
-  color: var(--text-2);
-  border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  background: var(--bg-surface);
+  color: var(--text-3);
+  flex-shrink: 0;
 }
 .user-input-item {
-  padding: 6px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex-shrink: 0; /* 面板内容超出时不压缩条目，保证两行完整显示 */
+  padding: 6px 10px;
   font-size: 12px;
+  line-height: 1.5;
   color: var(--text-2);
   cursor: pointer;
-  border-bottom: 1px solid var(--border);
-  border-left: 2px solid transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  transition: all 0.15s;
+}
+.user-input-idx {
+  flex-shrink: 0;
+  min-width: 16px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+  padding-top: 1px;
+}
+.user-input-text {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  transition: background 0.15s;
+  min-width: 0;
 }
-.user-input-item:hover { background: var(--bg-hover); color: var(--text-1); }
+.user-input-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
 .user-input-item.active {
-  border-left-color: var(--warning);
-  color: var(--warning);
   background: var(--warning-soft);
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+  color: var(--warning);
+}
+.user-input-item.active .user-input-idx {
+  color: var(--warning);
 }
 
 /* 聊天气泡 */

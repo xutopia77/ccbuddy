@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import type { Session, SessionStatus, View, PollConfig } from "./types";
-import { getEvents, getSessions, getSessionDetail, getConfig } from "./api";
+import { getEvents, getSessions, getSessionDetail, getEventDetail, getConfig } from "./api";
 import { darkTheme, type GlobalThemeOverrides } from "naive-ui";
 import TitleBar from "./components/TitleBar.vue";
 import EventList from "./components/EventList.vue";
@@ -89,7 +89,11 @@ async function loadDetail(id: string) {
   if (detailLoading) return;
   detailLoading = true;
   try {
-    sessionDetail.value = await getSessionDetail(id);
+    // 数据源分开：事件流视图读 hook 日志（最新50条），历史视图读原生 transcript（全量）
+    sessionDetail.value =
+      currentView.value === "history-sessions"
+        ? await getSessionDetail(id)
+        : await getEventDetail(id);
   } catch (e) {
     console.error("加载会话详情失败", e);
     // 详情加载失败时回退到当前视图列表里的概要数据（messages 为空）
@@ -157,11 +161,11 @@ function selectSession(session: Session) {
   loadDetail(session.id);
 }
 
-// 切换视图：清空选中与详情；首次进入历史视图时加载历史列表
+// 切换视图：清空选中与详情；每次进入历史视图都重新获取列表（不参与自动刷新）
 watch(currentView, (view) => {
   selectedSessionId.value = null;
   sessionDetail.value = null;
-  if (view === "history-sessions" && historySessions.value.length === 0) {
+  if (view === "history-sessions") {
     loadHistorySessions();
   }
 });

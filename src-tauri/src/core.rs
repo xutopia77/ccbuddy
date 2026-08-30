@@ -34,11 +34,20 @@ pub fn dispatch(ctx: &RpcContext, cmd: &str, data: Value) -> RpcResponse {
 /// 命令路由表：新增命令在此添加分支。
 fn handle(ctx: &RpcContext, cmd: &str, data: Value) -> Result<Value, AppError> {
     match cmd {
-        // 事件流会话列表（hook 日志，懒加载 messages 为空）
+        // 事件流会话列表（hook 日志，增量刷新，每会话最新50条事件）
         "get_events" => Ok(json!(crate::state::load_sessions())),
         // 会话列表（Claude Code 原生 transcript，与事件流分开）
         "get_sessions" => Ok(json!(crate::state::load_history_sessions())),
-        // 单个会话的完整消息（用户点开详情时按需解析 jsonl）
+        // 事件流会话详情（hook 日志，用户点开时解析该会话最新50条事件）
+        "get_event_detail" => {
+            let id = data
+                .as_str()
+                .ok_or_else(|| AppError::bad_request("会话 id 需为字符串"))?;
+            crate::state::load_event_detail(id)
+                .map(|s| json!(s))
+                .ok_or_else(|| AppError::not_found(format!("会话不存在: {id}")))
+        }
+        // 历史会话详情（原生 transcript，用户点开时解析全量消息）
         "get_session_detail" => {
             let id = data
                 .as_str()

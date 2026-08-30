@@ -1,9 +1,26 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 use serde::Serialize;
 
 use crate::event::Event;
+
+/// 事件流每个会话保留的最新事件条数。
+const MAX_EVENTS_PER_SESSION: usize = 50;
+
+/// 单个会话的解析缓存：文件未变化（mtime 相同）时直接复用上次结果，
+/// 轮询刷新只重读有更新的日志文件，避免每次全量解析。
+struct CachedSession {
+    mtime: SystemTime,
+    info: SessionInfo,
+}
+
+fn event_cache() -> &'static Mutex<HashMap<String, CachedSession>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, CachedSession>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// 会话状态（与前端 App.vue 的状态枚举保持一致）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -372,10 +389,54 @@ fn session_id_from_filename(path: &Path) -> String {
 
 /// 事件流会话列表（hook 日志 `~/.ccbuddy/events`，实时会话，状态由状态机推断）。
 ///
-/// 懒加载：列表只返回概要信息（标题/项目/时间/状态/预览），messages 为空。
-/// 完整消息由 [`load_session_detail`] 在用户点开某个会话时按需解析。
+/// 增量刷新：每个会话文件按 mtime 缓存解析结果，只有更新的文件才重新读取；
+/// 每个会话只保留最新 [`MAX_EVENTS_PER_SESSION`] 条事件。
 pub fn load_sessions() -> Vec<SessionInfo> {
-    let mut out = load_sessions_from(&events_dir());
+    let dir = events_dir();
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+
+    let mut cache = event_cache().lock().unwrap();
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    for entry in rd.flatten() {
+        let path = entry.path();
+        let session_id = session_id_from_filename(&path);
+        if session_id.is_empty() {
+            continue;
+        }
+        seen.insert(session_id.clone());
+        let Some(mtime) = file_mtime(&path) else {
+            continue;
+        };
+
+        let info = match cache.get(&session_id) {
+            // 文件未变化：直接复用上次解析结果
+            Some(c) if c.mtime == mtime => c.info.clone(),
+            _ => {
+                let mut info = parse_event_file(&path, &session_id);
+                // 只读尾部 N 条时，首条用户输入（标题来源）可能不在窗口内，沿用旧标题
+                if let Some(prev) = cache.get(&session_id) {
+                    if info.title == "(未命名会话)" && prev.info.title != "(未命名会话)" {
+                        info.title = prev.info.title.clone();
+                    }
+                    if info.cwd.is_empty() {
+                        info.cwd = prev.info.cwd.clone();
+                        info.project = prev.info.project.clone();
+                    }
+                }
+                cache.insert(session_id.clone(), CachedSession { mtime, info: info.clone() });
+                info
+            }
+        };
+        out.push(info);
+    }
+
+    // 清理日志文件已删除的会话缓存
+    cache.retain(|k, _| seen.contains(k));
+
     out.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
     out
 }
@@ -389,26 +450,91 @@ pub fn load_history_sessions() -> Vec<SessionInfo> {
     out
 }
 
-/// 按需加载单个会话的完整消息（用户点开会话详情时调用）。
-///
-/// 来源：优先原生 transcript（`<claude_dir>/projects/...`），
-/// 其次 hook 事件日志（`~/.ccbuddy/events`）——同一会话两边都可能有数据。
+/// 按需加载事件流会话详情（hook 日志 `~/.ccbuddy/events`，最新 50 条事件）。
+pub fn load_event_detail(session_id: &str) -> Option<SessionInfo> {
+    let path = events_dir().join(format!("event-{session_id}.jsonl"));
+    if path.is_file() {
+        Some(parse_event_file(&path, session_id))
+    } else {
+        None
+    }
+}
+
+/// 按需加载历史会话详情（原生 transcript，全量消息）。
 pub fn load_session_detail(session_id: &str) -> Option<SessionInfo> {
-    // 1. 原生 transcript（历史会话消息最全）；lazy=false：解析全部消息
-    if let Some(path) = native_session_path(session_id) {
-        if let Some(info) = parse_native_session(&path, false) {
-            return Some(info);
+    let path = native_session_path(session_id)?;
+    parse_native_session(&path, false)
+}
+
+/// 文件修改时间。
+fn file_mtime(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// 解析单个事件日志文件 `event-<session_id>.jsonl`，聚合为会话信息。
+///
+/// 只读文件尾部（最新 [`MAX_EVENTS_PER_SESSION`] 条事件），大文件不必全量读入。
+fn parse_event_file(path: &Path, session_id: &str) -> SessionInfo {
+    let lines = read_tail_lines(path, MAX_EVENTS_PER_SESSION);
+    let mut agg: Option<SessionAgg> = None;
+    for line in &lines {
+        if let Some(ev) = Event::parse(line, session_id) {
+            // 会话 id 优先取 payload 中的值，缺失时用文件名提取的 id
+            let a = agg.get_or_insert_with(|| SessionAgg::new(ev.session_id.clone()));
+            a.apply(&ev);
         }
     }
+    agg.map(SessionAgg::into_info)
+        .unwrap_or_else(|| SessionAgg::new(session_id.to_string()).into_info())
+}
 
-    // 2. hook 事件日志（实时会话）
-    let dir = events_dir();
-    if dir.join(format!("event-{session_id}.jsonl")).exists() {
-        let sessions = load_sessions_from(&dir);
-        return sessions.into_iter().find(|s| s.id == session_id);
+/// 读取文件尾部的完整行（最多 `max_lines` 条）。
+///
+/// 大文件只读最后 512KB；尾部块内行数不足时（单行超长）回退全量读取。
+fn read_tail_lines(path: &Path, max_lines: usize) -> Vec<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    const CHUNK: u64 = 512 * 1024;
+    let collect = |text: &str| -> Vec<String> {
+        text.lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect()
+    };
+
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let Ok(meta) = f.metadata() else {
+        return Vec::new();
+    };
+    let len = meta.len();
+    if len <= CHUNK {
+        let mut buf = String::new();
+        f.read_to_string(&mut buf).ok();
+        return collect(&buf);
     }
 
-    None
+    f.seek(SeekFrom::Start(len - CHUNK)).ok();
+    let mut buf = Vec::new();
+    f.take(CHUNK).read_to_end(&mut buf).ok();
+    // 首行可能从多字节字符中间被截断，用 lossy 转换并丢弃首行
+    let text = String::from_utf8_lossy(&buf);
+    let mut lines = collect(&text);
+    if !lines.is_empty() {
+        lines.remove(0);
+    }
+    if lines.len() < max_lines {
+        let mut buf = String::new();
+        if std::fs::File::open(path)
+            .and_then(|mut f2| f2.read_to_string(&mut buf))
+            .is_ok()
+        {
+            lines = collect(&buf);
+        }
+    }
+    lines
 }
 
 /// 在 `~/.claude/projects/` 下查找会话对应的 transcript 文件路径。
@@ -424,40 +550,6 @@ fn native_session_path(session_id: &str) -> Option<PathBuf> {
         }
     }
     None
-}
-
-/// 扫描指定目录，解析所有事件，聚合为会话列表。
-fn load_sessions_from(dir: &Path) -> Vec<SessionInfo> {
-    let mut files: Vec<PathBuf> = match std::fs::read_dir(dir) {
-        Ok(rd) => rd
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| {
-                p.file_name()
-                    .map(|n| n.to_string_lossy().starts_with("event-"))
-                    .unwrap_or(false)
-            })
-            .collect(),
-        Err(_) => return Vec::new(),
-    };
-    files.sort();
-
-    let mut sessions: HashMap<String, SessionAgg> = HashMap::new();
-
-    for path in &files {
-        let fallback = session_id_from_filename(path);
-        let content = std::fs::read_to_string(path).unwrap_or_default();
-        for line in content.lines().map(str::trim).filter(|l| !l.is_empty()) {
-            if let Some(ev) = Event::parse(line, &fallback) {
-                let agg = sessions
-                    .entry(ev.session_id.clone())
-                    .or_insert_with(|| SessionAgg::new(ev.session_id.clone()));
-                agg.apply(&ev);
-            }
-        }
-    }
-
-    sessions.into_values().map(|a| a.into_info()).collect()
 }
 
 /// Claude Code 原生会话目录：`~/.claude/projects/<项目路径编码>/<session-id>.jsonl`。
@@ -830,7 +922,10 @@ mod tests {
         append(&dir, "sess-b", r#"{"received_at":"2026-08-20T14:01:00Z","hook_event":"UserPromptSubmit","payload":{"session_id":"sess-b","cwd":"D:/work/other","prompt":"生成文档"}}"#);
         append(&dir, "sess-b", r#"{"received_at":"2026-08-20T14:02:00Z","hook_event":"SessionEnd","payload":{"session_id":"sess-b","cwd":"D:/work/other"}}"#);
 
-        let sessions = load_sessions_from(&dir);
+        let sessions: Vec<SessionInfo> = ["sess-a", "sess-b"]
+            .iter()
+            .map(|id| parse_event_file(&dir.join(format!("event-{id}.jsonl")), id))
+            .collect();
 
         assert_eq!(sessions.len(), 2);
         let a = sessions.iter().find(|s| s.id == "sess-a").unwrap();

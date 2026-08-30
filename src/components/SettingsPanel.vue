@@ -158,13 +158,13 @@ onMounted(() => {
       </div>
     </n-card>
 
-    <n-card title="数据刷新" size="small" class="settings-card">
+    <n-card title="事件刷新" size="small" class="settings-card">
       <div class="setting-row">
-        <span class="setting-label">周期性获取会话列表</span>
+        <span class="setting-label">周期性刷新事件流数据</span>
         <n-switch v-model:value="pollEnabled" size="small" @update:value="savePollConfig" />
       </div>
       <div class="setting-row">
-        <span class="setting-label">获取周期</span>
+        <span class="setting-label">刷新周期</span>
         <n-input-number
           v-model:value="pollInterval"
           size="small"
@@ -176,6 +176,12 @@ onMounted(() => {
         >
           <template #suffix>秒</template>
         </n-input-number>
+      </div>
+      <div class="setting-row">
+        <span class="setting-value hint-text">
+          仅作用于事件流界面：每个会话只保留最新 50 条事件，且只重新解析有更新的日志文件。
+          历史会话不参与自动刷新，进入界面时获取列表，点开会话时加载详情。
+        </span>
       </div>
     </n-card>
 

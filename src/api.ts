@@ -19,7 +19,10 @@ export const getEvents = () => request<Session[]>("get_events");
 /** 获取会话列表（Claude Code 原生 transcript，与事件流分开）。 */
 export const getSessions = () => request<Session[]>("get_sessions");
 
-/** 按需加载单个会话的完整消息（用户点开会话详情时调用）。 */
+/** 事件流会话详情（hook 日志，最新 50 条事件）。 */
+export const getEventDetail = (id: string) => request<Session>("get_event_detail", id);
+
+/** 历史会话详情（原生 transcript，全量消息）。 */
 export const getSessionDetail = (id: string) => request<Session>("get_session_detail", id);
 
 /** 用户配置（get_config 返回的视图，含只读派生字段）。 */
