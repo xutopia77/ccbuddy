@@ -32,14 +32,19 @@ const themeOverrides: GlobalThemeOverrides = {
 
 // ---- 状态 ----
 const currentView = ref<View>("sessions");
-const selectedSessionId = ref<string | null>(null);
+// 事件流视图选中会话（hook 日志，实时）
+const selectedEventId = ref<string | null>(null);
+// 历史会话视图选中会话（原生 transcript）
+const selectedHistoryId = ref<string | null>(null);
 // 事件流会话（hook 日志，实时）
 const sessions = ref<Session[]>([]);
 // 历史会话（Claude Code 原生 transcript），与事件流分开加载
 const historySessions = ref<Session[]>([]);
 const eventsDir = ref("");
-// 选中会话的完整详情（懒加载：列表的 messages 为空，点开后单独拉取）
-const sessionDetail = ref<Session | null>(null);
+// 事件流选中会话的完整详情（懒加载：列表的 messages 为空，点开后单独拉取）
+const eventDetail = ref<Session | null>(null);
+// 历史会话选中会话的完整详情（懒加载）
+const historyDetail = ref<Session | null>(null);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let detailLoading = false;
@@ -52,14 +57,14 @@ async function loadEvents() {
     sessions.value = data;
 
     // 保持选中状态：若当前选中会话已消失则清除，否则若未选中则选最紧急的
-    if (selectedSessionId.value && !sessions.value.find((s) => s.id === selectedSessionId.value)) {
-      selectedSessionId.value = null;
+    if (selectedEventId.value && !sessions.value.find((s) => s.id === selectedEventId.value)) {
+      selectedEventId.value = null;
     }
-    if (!selectedSessionId.value && sessions.value.length > 0) {
+    if (!selectedEventId.value && sessions.value.length > 0) {
       const firstUrgent =
         sessions.value.find((s) => s.status === "waiting_confirmation") ??
         sessions.value.find((s) => s.status === "error");
-      selectedSessionId.value = firstUrgent ? firstUrgent.id : sessions.value[0].id;
+      selectedEventId.value = firstUrgent ? firstUrgent.id : sessions.value[0].id;
     }
   } catch (e) {
     console.error("加载事件流失败", e);
@@ -88,18 +93,24 @@ async function loadHistorySessions() {
 async function loadDetail(id: string) {
   if (detailLoading) return;
   detailLoading = true;
+  const isHistory = currentView.value === "history-sessions";
   try {
     // 数据源分开：事件流视图读 hook 日志（最新50条），历史视图读原生 transcript（全量）
-    sessionDetail.value =
-      currentView.value === "history-sessions"
-        ? await getSessionDetail(id)
-        : await getEventDetail(id);
+    if (isHistory) {
+      historyDetail.value = await getSessionDetail(id);
+    } else {
+      eventDetail.value = await getEventDetail(id);
+    }
   } catch (e) {
     console.error("加载会话详情失败", e);
     // 详情加载失败时回退到当前视图列表里的概要数据（messages 为空）
-    const pool =
-      currentView.value === "history-sessions" ? historySessions.value : sessions.value;
-    sessionDetail.value = pool.find((s) => s.id === id) ?? null;
+    const pool = isHistory ? historySessions.value : sessions.value;
+    const fallback = pool.find((s) => s.id === id) ?? null;
+    if (isHistory) {
+      historyDetail.value = fallback;
+    } else {
+      eventDetail.value = fallback;
+    }
   } finally {
     detailLoading = false;
   }
@@ -121,13 +132,17 @@ const sortedSessions = computed(() => {
 });
 
 const selectedSession = computed(() => {
-  // 详情已懒加载完成则用详情，否则回退当前视图的列表概要
-  if (sessionDetail.value && sessionDetail.value.id === selectedSessionId.value) {
-    return sessionDetail.value;
+  // 依据当前视图返回各自的选中项：详情优先、回退列表概要
+  if (currentView.value === "history-sessions") {
+    if (historyDetail.value && historyDetail.value.id === selectedHistoryId.value) {
+      return historyDetail.value;
+    }
+    return historySessions.value.find((s) => s.id === selectedHistoryId.value) ?? null;
   }
-  const pool =
-    currentView.value === "history-sessions" ? historySessions.value : sessions.value;
-  return pool.find((s) => s.id === selectedSessionId.value) ?? null;
+  if (eventDetail.value && eventDetail.value.id === selectedEventId.value) {
+    return eventDetail.value;
+  }
+  return sessions.value.find((s) => s.id === selectedEventId.value) ?? null;
 });
 
 const projectGroups = computed(() => {
@@ -154,17 +169,25 @@ function countByStatus(status: SessionStatus): number {
 
 // ---- 交互 ----
 function selectSession(session: Session) {
-  selectedSessionId.value = session.id;
+  // 按当前视图写入对应视图的选中状态
+  if (currentView.value === "history-sessions") {
+    selectedHistoryId.value = session.id;
+    historyDetail.value = null;
+  } else {
+    selectedEventId.value = session.id;
+    eventDetail.value = null;
+  }
   session.unread = false;
   // 懒加载：点开时才解析该会话的完整 jsonl
-  sessionDetail.value = null;
   loadDetail(session.id);
 }
 
 // 切换视图：清空选中与详情；每次进入历史视图都重新获取列表（不参与自动刷新）
 watch(currentView, (view) => {
-  selectedSessionId.value = null;
-  sessionDetail.value = null;
+  selectedEventId.value = null;
+  selectedHistoryId.value = null;
+  eventDetail.value = null;
+  historyDetail.value = null;
   if (view === "history-sessions") {
     loadHistorySessions();
   }
@@ -217,13 +240,13 @@ function applyPollTimer() {
         <div class="main-container">
           <!-- 事件流视图 -->
           <template v-if="currentView === 'sessions'">
-            <EventList :sessions="sortedSessions" :selected-id="selectedSessionId" @select="selectSession" />
+            <EventList :sessions="sortedSessions" :selected-id="selectedEventId" @select="selectSession" />
             <SessionDetail :session="selectedSession" empty-text="选择一个会话查看事件流" />
           </template>
 
           <!-- 历史会话视图（聊天记录形式） -->
           <template v-else-if="currentView === 'history-sessions'">
-            <SessionList :groups="projectGroups" :selected-id="selectedSessionId" @select="selectSession" />
+            <SessionList :groups="projectGroups" :selected-id="selectedHistoryId" @select="selectSession" />
             <SessionDetail :session="selectedSession" mode="chat" empty-text="选择一个历史会话查看聊天记录" />
           </template>
 
