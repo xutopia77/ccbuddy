@@ -283,18 +283,46 @@ mod gui {
 #[cfg(feature = "gui")]
 pub use gui::run;
 
+/// ccbuddy-hook 注册的 Claude Code Hook 事件全集。
+///
+/// 覆盖官方全部 hook 事件（工具生命周期 / 权限 / 会话 / 通知 / 文件与工作区 /
+/// 子代理与任务 / 压缩 / MCP 交互 / 初始化），使事件流时间线完整反映会话过程。
+pub const HOOK_EVENTS: [&str; 31] = [
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PostToolBatch",
+    "PermissionRequest",
+    "PermissionDenied",
+    "Notification",
+    "MessageDisplay",
+    "UserPromptSubmit",
+    "UserPromptExpansion",
+    "Stop",
+    "StopFailure",
+    "SubagentStart",
+    "SubagentStop",
+    "TaskCreated",
+    "TaskCompleted",
+    "TeammateIdle",
+    "PreCompact",
+    "PostCompact",
+    "Elicitation",
+    "ElicitationResult",
+    "ConfigChange",
+    "CwdChanged",
+    "DirectoryAdded",
+    "FileChanged",
+    "InstructionsLoaded",
+    "WorktreeCreate",
+    "WorktreeRemove",
+    "Setup",
+    "SessionStart",
+    "SessionEnd",
+];
+
 /// 把 ccbuddy-hook 的 hook 合并进现有 hooks 配置，不覆盖已有事件与其他 hook。
 fn merge_hooks(map: &mut serde_json::Map<String, Value>, command: &str) {
-    let hook_events = [
-        "PreToolUse",
-        "PostToolUse",
-        "Notification",
-        "UserPromptSubmit",
-        "Stop",
-        "SubagentStop",
-        "SessionStart",
-        "SessionEnd",
-    ];
     let entry = json!({
         "matcher": "*",
         "hooks": [
@@ -308,7 +336,7 @@ fn merge_hooks(map: &mut serde_json::Map<String, Value>, command: &str) {
         .or_insert_with(|| Value::Object(serde_json::Map::new()));
 
     if let Value::Object(hooks_map) = hooks {
-        for ev in hook_events {
+        for ev in HOOK_EVENTS {
             let arr = hooks_map
                 .entry(ev.to_string())
                 .or_insert_with(|| Value::Array(Vec::new()));
@@ -371,17 +399,8 @@ mod tests {
         assert_eq!(pre.len(), 2, "PreToolUse 应保留原 hook 并追加 ccbuddy-hook");
         // 无关字段保留
         assert!(map.contains_key("env"), "env 字段应保留");
-        // 8 个事件全部注册
-        for ev in [
-            "PreToolUse",
-            "PostToolUse",
-            "Notification",
-            "UserPromptSubmit",
-            "Stop",
-            "SubagentStop",
-            "SessionStart",
-            "SessionEnd",
-        ] {
+        // 全部 hook 事件均已注册
+        for ev in HOOK_EVENTS {
             assert!(hooks.contains_key(ev), "缺少事件 {ev}");
         }
     }

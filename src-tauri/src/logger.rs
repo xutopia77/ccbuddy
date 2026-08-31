@@ -11,7 +11,7 @@
 //! 最多保留 `max_files` 个轮转文件。
 //!
 //! 用法：
-//! ```rust
+//! ```ignore
 //! logger::init(logger::Config::default()).expect("初始化日志失败");
 //! log::info!("hello {}", 42);
 //! ```

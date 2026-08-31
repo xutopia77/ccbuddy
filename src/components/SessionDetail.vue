@@ -96,6 +96,11 @@ function detailOf(msg: Message): string {
   return msg.type === "tool_use" ? toolBody(msg) : msg.content;
 }
 
+/** 事件流时间线：最新事件在最上方（倒序）。历史聊天记录保持正序，故仅此处使用。 */
+const eventMessages = computed(() =>
+  props.session ? [...props.session.messages].reverse() : []
+);
+
 // 展开状态（按消息下标，切换会话时重置）
 const expanded = ref(new Set<number>());
 watch(() => props.session?.id, () => {
@@ -206,7 +211,7 @@ function scrollToUser(idx: number) {
         <div class="stream-header">事件流时间线 · 共 {{ session.messages.length }} 条 · 点击行展开详情</div>
         <ul class="event-list">
           <li
-            v-for="(msg, idx) in session.messages"
+            v-for="(msg, idx) in eventMessages"
             :key="idx"
             class="event-item"
             :class="{ expandable: hasDetail(msg) }"

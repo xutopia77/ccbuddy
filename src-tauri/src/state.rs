@@ -127,7 +127,7 @@ impl SessionAgg {
         }
 
         match ev.hook_event.as_str() {
-            "SessionStart" => {
+            "SessionStart" | "Setup" => {
                 self.status = SessionStatus::Idle;
             }
             "UserPromptSubmit" => {
@@ -144,6 +144,28 @@ impl SessionAgg {
                             msg_type: "user",
                             role: "user",
                             content: prompt,
+                            time: short_time(&ev.received_at),
+                            tool_call: None,
+                        });
+                    }
+                }
+            }
+            "UserPromptExpansion" => {
+                // 用户提示词被 Claude Code 扩展：展示扩展结果（不影响标题）
+                let text = ev
+                    .payload
+                    .get("expanded_prompt")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .or_else(|| ev.prompt());
+                if let Some(t) = text {
+                    if !is_system_marker(&t) {
+                        self.preview = truncate(&t, 60);
+                        self.messages.push(Message {
+                            msg_type: "user",
+                            role: "user",
+                            content: t,
                             time: short_time(&ev.received_at),
                             tool_call: None,
                         });
@@ -172,6 +194,11 @@ impl SessionAgg {
                     self.status = SessionStatus::Running;
                 }
             }
+            "PostToolUseFailure" => {
+                self.status = SessionStatus::Error;
+                self.has_error = true;
+                self.messages.push(system_message("工具调用失败", &ev.received_at));
+            }
             "Notification" => {
                 if let Some(msg) = ev.message() {
                     if needs_input(&msg) {
@@ -190,14 +217,22 @@ impl SessionAgg {
                     self.has_error = true;
                 }
             }
+            "StopFailure" => {
+                self.status = SessionStatus::Error;
+                self.has_error = true;
+                self.messages.push(system_message("会话停止失败", &ev.received_at));
+            }
             "SessionEnd" => {
                 if !self.has_error {
                     self.status = SessionStatus::Completed;
                 }
             }
-            // 其余事件（AssistantMessage 等）：若带文本内容则作为 assistant 消息展示。
+            // 可观测元事件（权限/压缩/任务/文件变更等）：作为 system 消息展示，不改变核心状态。
+            // 其余事件（MessageDisplay 等）：若带文本内容则作为 assistant 消息展示。
             _ => {
-                if let Some(content) = ev.message() {
+                if let Some(desc) = meta_description(ev) {
+                    self.messages.push(system_message(&desc, &ev.received_at));
+                } else if let Some(content) = ev.message() {
                     self.preview = truncate(&content, 60);
                     self.messages.push(Message {
                         msg_type: "assistant",
@@ -256,6 +291,77 @@ fn system_message(content: &str, time: &str) -> Message {
         time: short_time(time),
         tool_call: None,
     }
+}
+
+/// 为可观测元事件生成一句话描述（权限 / 压缩 / 任务 / 文件变更 / 子代理等）。
+///
+/// 这些事件不改变会话的核心状态机，只在事件流时间线里作为 system 消息展示。
+/// 提取不到特定字段时回退到事件名；未知事件返回 None（由调用方走通用消息分支）。
+fn meta_description(ev: &Event) -> Option<String> {
+    let s = |k: &str| {
+        ev.payload
+            .get(k)
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .map(|v| v.to_string())
+    };
+    Some(match ev.hook_event.as_str() {
+        "ConfigChange" => s("config_source")
+            .map(|v| format!("配置变更：{v}"))
+            .unwrap_or_else(|| "配置变更".to_string()),
+        "CwdChanged" => s("cwd")
+            .map(|v| format!("工作目录切换：{v}"))
+            .unwrap_or_else(|| "工作目录切换".to_string()),
+        "DirectoryAdded" => s("directory")
+            .map(|v| format!("新增目录：{v}"))
+            .unwrap_or_else(|| "新增目录".to_string()),
+        "FileChanged" => s("file_path")
+            .map(|v| format!("文件变更：{v}"))
+            .unwrap_or_else(|| "文件变更".to_string()),
+        "InstructionsLoaded" => s("file_path")
+            .map(|v| format!("加载指令：{v}"))
+            .unwrap_or_else(|| "加载指令".to_string()),
+        "WorktreeCreate" => s("name")
+            .map(|v| format!("创建工作树：{v}"))
+            .unwrap_or_else(|| "创建工作树".to_string()),
+        "WorktreeRemove" => s("worktree_path")
+            .or_else(|| s("path"))
+            .map(|v| format!("移除工作树：{v}"))
+            .unwrap_or_else(|| "移除工作树".to_string()),
+        "PreCompact" => "开始压缩上下文".to_string(),
+        "PostCompact" => "上下文压缩完成".to_string(),
+        "TaskCreated" => s("task_name")
+            .or_else(|| s("task_id"))
+            .map(|v| format!("创建任务：{v}"))
+            .unwrap_or_else(|| "创建任务".to_string()),
+        "TaskCompleted" => s("task_name")
+            .or_else(|| s("task_id"))
+            .map(|v| format!("任务完成：{v}"))
+            .unwrap_or_else(|| "任务完成".to_string()),
+        "TeammateIdle" => "队友空闲".to_string(),
+        "SubagentStart" => s("subagent_name")
+            .map(|v| format!("启动子代理：{v}"))
+            .unwrap_or_else(|| "启动子代理".to_string()),
+        "PermissionRequest" => {
+            let tool = s("tool_name").unwrap_or_else(|| "工具".to_string());
+            match s("reason") {
+                Some(r) => format!("请求权限：{tool}（{r}）"),
+                None => format!("请求权限：{tool}"),
+            }
+        }
+        "PermissionDenied" => s("tool_name")
+            .map(|v| format!("权限被拒：{v}"))
+            .unwrap_or_else(|| "权限被拒".to_string()),
+        "Elicitation" => ev
+            .message()
+            .map(|m| format!("MCP 请求输入：{}", truncate(&m, 60)))
+            .unwrap_or_else(|| "MCP 请求输入".to_string()),
+        "ElicitationResult" => s("response")
+            .map(|v| format!("MCP 输入结果：{}", truncate(&v, 60)))
+            .unwrap_or_else(|| "MCP 输入结果".to_string()),
+        "PostToolBatch" => "工具批次执行完成".to_string(),
+        _ => return None,
+    })
 }
 
 /// 通知消息是否要求用户输入（简单启发式）。
@@ -361,16 +467,7 @@ pub fn hook_status() -> serde_json::Value {
         .to_string_lossy()
         .replace('\\', "/");
     if let Some(hooks) = root.get("hooks").and_then(|h| h.as_object()) {
-        for ev in [
-            "PreToolUse",
-            "PostToolUse",
-            "Notification",
-            "UserPromptSubmit",
-            "Stop",
-            "SubagentStop",
-            "SessionStart",
-            "SessionEnd",
-        ] {
+        for ev in crate::HOOK_EVENTS {
             let hit = hooks
                 .get(ev)
                 .and_then(|v| v.as_array())
@@ -976,5 +1073,48 @@ mod tests {
         assert!(a.messages.iter().any(|m| m.tool_call.as_deref() == Some("Bash")));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parses_failure_and_meta_events() {
+        let dir = std::env::temp_dir().join("ccbuddy-test-new-events");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        append(&dir, "sess-fail", r#"{"received_at":"2026-08-20T14:00:00Z","hook_event":"SessionStart","payload":{"session_id":"sess-fail","cwd":"D:/work/proj"}}"#);
+        append(&dir, "sess-fail", r#"{"received_at":"2026-08-20T14:01:00Z","hook_event":"UserPromptSubmit","payload":{"session_id":"sess-fail","prompt":"编译项目"}}"#);
+        append(&dir, "sess-fail", r#"{"received_at":"2026-08-20T14:02:00Z","hook_event":"PostToolUseFailure","payload":{"session_id":"sess-fail","tool_name":"Bash"}}"#);
+        append(&dir, "sess-fail", r#"{"received_at":"2026-08-20T14:03:00Z","hook_event":"FileChanged","payload":{"session_id":"sess-fail","file_path":"D:/work/proj/.envrc"}}"#);
+
+        let info = parse_event_file(&dir.join("event-sess-fail.jsonl"), "sess-fail");
+        assert_eq!(info.status, "error");
+        assert!(info.unread);
+        assert!(info.messages.iter().any(|m| m.msg_type == "system" && m.content.contains("工具调用失败")));
+        assert!(info.messages.iter().any(|m| m.content.contains("文件变更") && m.content.contains(".envrc")));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn meta_description_extracts_fields() {
+        let ev = Event::parse(
+            r#"{"received_at":"2026-08-20T14:00:00Z","hook_event":"FileChanged","payload":{"session_id":"s","file_path":"/a/b.env"}}"#,
+            "fallback",
+        )
+        .unwrap();
+        assert_eq!(meta_description(&ev).unwrap(), "文件变更：/a/b.env");
+
+        let ev2 = Event::parse(
+            r#"{"received_at":"2026-08-20T14:00:00Z","hook_event":"PostToolBatch","payload":{"session_id":"s"}}"#,
+            "fallback",
+        )
+        .unwrap();
+        assert_eq!(meta_description(&ev2).unwrap(), "工具批次执行完成");
+
+        let ev3 = Event::parse(
+            r#"{"received_at":"2026-08-20T14:00:00Z","hook_event":"AssistantMessage","payload":{"session_id":"s","message":"hi"}}"#,
+            "fallback",
+        )
+        .unwrap();
+        assert_eq!(meta_description(&ev3), None);
     }
 }
