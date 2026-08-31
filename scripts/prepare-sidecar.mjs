@@ -31,14 +31,22 @@ if (process.platform === 'win32' && !existsSync(placeholderWin)) {
 }
 
 // 2. 构建真正的 hook（此时 build.rs 能看到占位文件，检查通过）
+//    Linux 用 musl 静态链接：无 glibc 依赖，可在 Ubuntu 18 等旧版发行版上运行
+const isLinux = process.platform === 'linux';
+const muslTarget = 'x86_64-unknown-linux-musl';
+if (isLinux) {
+  execSync(`rustup target add ${muslTarget}`, { cwd: srcTauri, stdio: 'inherit' });
+}
 console.log('[sidecar] 构建 ccbuddy-hook ...');
-execSync('cargo build --release --bin ccbuddy-hook', {
-  cwd: srcTauri,
-  stdio: 'inherit',
-});
+const buildCmd = isLinux
+  ? `cargo build --release --bin ccbuddy-hook --target ${muslTarget}`
+  : 'cargo build --release --bin ccbuddy-hook';
+execSync(buildCmd, { cwd: srcTauri, stdio: 'inherit' });
 
 // 3. 用真实 hook 覆盖占位文件
-const hook = join(srcTauri, 'target', 'release', hookName);
+const hook = isLinux
+  ? join(srcTauri, 'target', muslTarget, 'release', hookName)
+  : join(srcTauri, 'target', 'release', hookName);
 copyFileSync(hook, dest);
 if (process.platform === 'win32') {
   copyFileSync(hook, placeholderWin);

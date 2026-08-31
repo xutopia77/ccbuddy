@@ -27,6 +27,8 @@ ccbuddy 一键打包脚本（本地与 GitHub Actions 通用）。
 
 说明：
 - hook 是纯 Rust 二进制（无 GUI 依赖），可交叉编译。
+- Linux 的 hook 固定用 musl 静态链接（x86_64-unknown-linux-musl），
+  不依赖 glibc，可在 Ubuntu 18 等旧版发行版上运行。
 - Tauri 主程序依赖各平台原生 WebView，无法交叉编译，须在对应平台运行
   （GitHub Actions 用三平台 matrix，本地默认只打当前平台）。
 - 便携包：裸主程序二进制 + 平台命名的 hook，解压即用；hook 与主程序同目录，
@@ -50,9 +52,13 @@ SRC_TAURI = ROOT / "src-tauri"
 OUT_DIR = ROOT / "dist-release"
 
 # hook 交叉编译目标（triple -> 输出文件名后缀）
+# Linux 固定用 musl 静态链接：hook 无 GUI 依赖，静态链接后不依赖 glibc，
+# 可在任意旧版发行版（如 Ubuntu 18，glibc 2.27）直接运行。
+MUSL_TARGET = "x86_64-unknown-linux-musl"
+
 HOOK_TARGETS = [
     ("x86_64-pc-windows-msvc", "ccbuddy-hook-windows-x86_64.exe", None),
-    ("x86_64-unknown-linux-gnu", "ccbuddy-hook-linux-x86_64", None),
+    (MUSL_TARGET, "ccbuddy-hook-linux-x86_64", None),
     ("x86_64-apple-darwin", "ccbuddy-hook-darwin-x86_64", "MACOSX_DEPLOYMENT_TARGET=10.13"),
     ("aarch64-apple-darwin", "ccbuddy-hook-darwin-aarch64", "MACOSX_DEPLOYMENT_TARGET=11.0"),
 ]
@@ -74,8 +80,19 @@ def ensure_hook_placeholder() -> None:
 
 
 def build_hook_current() -> Path:
-    """构建当前平台的 hook（release），返回产物路径。"""
+    """构建当前平台的 hook（release），返回产物路径。
+
+    Linux 固定用 musl 静态链接（x86_64-unknown-linux-musl）：hook 无 GUI 依赖，
+    静态链接后不依赖 glibc，可在任意旧版发行版（如 Ubuntu 18）直接运行。
+    """
     ensure_hook_placeholder()
+    if sys.platform.startswith("linux"):
+        run(["rustup", "target", "add", MUSL_TARGET])
+        run(
+            ["cargo", "build", "--release", "--bin", "ccbuddy-hook", "--target", MUSL_TARGET],
+            cwd=SRC_TAURI,
+        )
+        return SRC_TAURI / "target" / MUSL_TARGET / "release" / "ccbuddy-hook"
     run(["cargo", "build", "--release", "--bin", "ccbuddy-hook"], cwd=SRC_TAURI)
     name = "ccbuddy-hook.exe" if sys.platform == "win32" else "ccbuddy-hook"
     return SRC_TAURI / "target" / "release" / name
@@ -284,7 +301,7 @@ def main() -> None:
         if platform.system() != "Linux":
             print("[build] --server-musl 仅支持在 Linux 上构建")
             sys.exit(1)
-        target = "x86_64-unknown-linux-musl"
+        target = MUSL_TARGET
         run(["rustup", "target", "add", target])
         server = build_server(target)
         server_out = OUT_DIR / "ccbuddy-server-linux-x86_64-musl"
