@@ -31,7 +31,10 @@ if (process.platform === 'win32' && !existsSync(placeholderWin)) {
 }
 
 // 2. 构建真正的 hook（此时 build.rs 能看到占位文件，检查通过）
-//    Linux 用 musl 静态链接：无 glibc 依赖，可在 Ubuntu 18 等旧版发行版上运行
+//    Linux 用 musl 静态链接：无 glibc 依赖，可在 Ubuntu 18 等旧版发行版上运行。
+//    必须加 --no-default-features：默认 gui feature 会拉进 tauri/Linux 桌面栈
+//    （libdbus-sys），其 build.rs 在 musl 交叉编译时 pkg-config 失败而 panic。
+//    hook 不使用 lib，关掉 gui 不影响功能（与 ccbuddy-server 的 musl 编译一致）。
 const isLinux = process.platform === 'linux';
 const muslTarget = 'x86_64-unknown-linux-musl';
 if (isLinux) {
@@ -39,7 +42,7 @@ if (isLinux) {
 }
 console.log('[sidecar] 构建 ccbuddy-hook ...');
 const buildCmd = isLinux
-  ? `cargo build --release --bin ccbuddy-hook --target ${muslTarget}`
+  ? `cargo build --release --no-default-features --bin ccbuddy-hook --target ${muslTarget}`
   : 'cargo build --release --bin ccbuddy-hook';
 execSync(buildCmd, { cwd: srcTauri, stdio: 'inherit' });
 

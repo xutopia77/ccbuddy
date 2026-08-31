@@ -84,12 +84,17 @@ def build_hook_current() -> Path:
 
     Linux 固定用 musl 静态链接（x86_64-unknown-linux-musl）：hook 无 GUI 依赖，
     静态链接后不依赖 glibc，可在任意旧版发行版（如 Ubuntu 18）直接运行。
+
+    必须加 --no-default-features：默认 gui feature 会把 tauri 及 Linux 桌面栈
+    （dbus/tao 等）拉进依赖图，libdbus-sys 的 build.rs 在 musl 交叉编译时
+    pkg-config 找不到目标 sysroot 而 panic。hook 是独立日志程序，不使用 lib，
+    关掉 gui 不影响其功能（ccbuddy-server 的 musl 编译同样是 --no-default-features）。
     """
     ensure_hook_placeholder()
     if sys.platform.startswith("linux"):
         run(["rustup", "target", "add", MUSL_TARGET])
         run(
-            ["cargo", "build", "--release", "--bin", "ccbuddy-hook", "--target", MUSL_TARGET],
+            ["cargo", "build", "--release", "--no-default-features", "--bin", "ccbuddy-hook", "--target", MUSL_TARGET],
             cwd=SRC_TAURI,
         )
         return SRC_TAURI / "target" / MUSL_TARGET / "release" / "ccbuddy-hook"
@@ -115,12 +120,13 @@ def build_hook_cross(target: str, out_name: str, env_extra: str | None) -> bool:
         key, _, val = env_extra.partition("=")
         env = {**__import__("os").environ, key: val}
 
+    # Linux musl 目标需关闭默认 gui feature（否则 libdbus-sys 交叉 pkg-config 失败）
+    cmd = ["cargo", "build", "--release", "--bin", "ccbuddy-hook", "--target", target]
+    if "linux-musl" in target:
+        cmd.insert(2, "--no-default-features")
+
     try:
-        run(
-            ["cargo", "build", "--release", "--bin", "ccbuddy-hook", "--target", target],
-            cwd=SRC_TAURI,
-            env=env,
-        )
+        run(cmd, cwd=SRC_TAURI, env=env)
     except subprocess.CalledProcessError:
         print(f"[build] 跳过 {target}：交叉编译失败（可能缺少系统工具链）")
         return False
