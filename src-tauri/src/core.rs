@@ -35,9 +35,9 @@ pub fn dispatch(ctx: &RpcContext, cmd: &str, data: Value) -> RpcResponse {
 fn handle(ctx: &RpcContext, cmd: &str, data: Value) -> Result<Value, AppError> {
     match cmd {
         // 事件流会话列表（hook 日志，增量刷新，每会话最新50条事件）
-        "get_events" => Ok(json!(crate::state::load_sessions())),
+        "get_events" => Ok(json!(crate::state::load_events())),
         // 会话列表（Claude Code 原生 transcript，与事件流分开）
-        "get_sessions" => Ok(json!(crate::state::load_history_sessions())),
+        "get_sessions" => Ok(json!(crate::state::load_sessions())),
         // 事件流会话详情（hook 日志，用户点开时解析该会话最新50条事件）
         "get_event_detail" => {
             let id = data

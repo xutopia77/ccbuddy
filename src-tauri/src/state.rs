@@ -503,7 +503,7 @@ fn session_id_from_filename(path: &Path) -> String {
 ///
 /// 增量刷新：每个会话文件按 mtime 缓存解析结果，只有更新的文件才重新读取；
 /// 每个会话只保留最新 [`MAX_EVENTS_PER_SESSION`] 条事件。
-pub fn load_sessions() -> Vec<SessionInfo> {
+pub fn load_events() -> Vec<SessionInfo> {
     let dir = events_dir();
     let Ok(rd) = std::fs::read_dir(&dir) else {
         return Vec::new();
@@ -553,10 +553,12 @@ pub fn load_sessions() -> Vec<SessionInfo> {
     out
 }
 
-/// 历史会话列表（Claude Code 原生 transcript，`<claude_dir>/projects/`）。
+/// 会话列表（Claude Code 原生 transcript，`<claude_dir>/projects/`）。
 ///
 /// 与事件流分开：历史界面只取原生数据，不混合 hook 日志。
-pub fn load_history_sessions() -> Vec<SessionInfo> {
+/// 解析结果在 `load_native_sessions` 内按文件 mtime 缓存概要，messages 为空；
+/// 完整消息由 `load_session_detail` 在点开会话时按需解析。
+pub fn load_sessions() -> Vec<SessionInfo> {
     let mut out = load_native_sessions();
     out.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
     out
@@ -565,7 +567,7 @@ pub fn load_history_sessions() -> Vec<SessionInfo> {
 /// 紧急会话（等待确认 / 等待输入 / 出错）的 id 列表（任务栏通知用）。
 #[cfg(feature = "gui")]
 pub fn urgent_session_ids() -> Vec<String> {
-    load_sessions()
+    load_events()
         .into_iter()
         .filter(|s| {
             matches!(
@@ -684,12 +686,32 @@ fn projects_dir() -> PathBuf {
     claude_dir().join("projects")
 }
 
+/// 单个原生会话 transcript 的解析缓存（按文件路径 + mtime 失效）。
+///
+/// 列表加载（`load_native_sessions`）每次进入历史视图都会调用，若每个文件都重新
+/// 读取并逐行解析，会话很多时会明显变慢。这里只缓存 **概要**（`lazy=true` 解析，
+/// `messages` 为空）；完整消息仍由 `load_session_detail` 在用户点开会话时按需全量
+/// 解析，不常驻缓存，避免一次性把所有会话的全部消息读进内存。
+struct CachedNativeSession {
+    mtime: SystemTime,
+    info: SessionInfo,
+}
+
+fn native_cache() -> &'static Mutex<HashMap<PathBuf, CachedNativeSession>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedNativeSession>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// 扫描原生历史会话，聚合为会话列表（历史会话统一标记为 completed）。
 ///
 /// 概要模式（lazy=true）：不收集消息，只为列表提供标题/项目/时间/预览。
+/// 解析结果按文件 mtime 缓存：文件未变化时直接复用上次概要，无需反复读盘解析。
 fn load_native_sessions() -> Vec<SessionInfo> {
     let dir = projects_dir();
+    let mut cache = native_cache().lock().unwrap();
     let mut result = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+
     let Ok(project_dirs) = std::fs::read_dir(&dir) else {
         return result;
     };
@@ -707,12 +729,29 @@ fn load_native_sessions() -> Vec<SessionInfo> {
             if fp.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                 continue;
             }
-            // lazy=true：列表概要模式，不收集消息（详情由 get_session_detail 按需解析）
-            if let Some(info) = parse_native_session(&fp, true) {
-                result.push(info);
-            }
+            seen.insert(fp.clone());
+            let Some(mtime) = file_mtime(&fp) else {
+                continue;
+            };
+
+            // 文件未变化 → 复用缓存概要；否则（或首次）重新解析概要
+            let info = match cache.get(&fp) {
+                Some(c) if c.mtime == mtime => c.info.clone(),
+                _ => {
+                    // lazy=true：概要模式，不收集消息（详情由 get_session_detail 点击时解析）
+                    let Some(info) = parse_native_session(&fp, true) else {
+                        continue;
+                    };
+                    cache.insert(fp.clone(), CachedNativeSession { mtime, info: info.clone() });
+                    info
+                }
+            };
+            result.push(info);
         }
     }
+
+    // 清理已删除 transcript 文件的缓存
+    cache.retain(|k, _| seen.contains(k));
     result
 }
 
@@ -1090,6 +1129,49 @@ mod tests {
         assert!(info.unread);
         assert!(info.messages.iter().any(|m| m.msg_type == "system" && m.content.contains("工具调用失败")));
         assert!(info.messages.iter().any(|m| m.content.contains("文件变更") && m.content.contains(".envrc")));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 写一个原生 transcript 文件（Claude Code projects 目录同构：jsonl 逐行消息）。
+    fn write_native_session(dir: &Path, session: &str, lines: &[&str]) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let file = dir.join(format!("{session}.jsonl"));
+        let mut f = std::fs::File::create(&file).unwrap();
+        for l in lines {
+            f.write_all(l.as_bytes()).unwrap();
+            f.write_all(b"\n").unwrap();
+        }
+        file
+    }
+
+    #[test]
+    fn native_lazy_skips_messages_until_detail() {
+        let dir = std::env::temp_dir().join("ccbuddy-test-native");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // user 行：字符串 content 为用户输入；assistant 行：text 块数组
+        let file = write_native_session(
+            &dir,
+            "sess-native",
+            &[
+                r#"{"type":"user","message":{"role":"user","content":"帮我看看这个 bug"},"cwd":"/repo/x","timestamp":"2026-08-20T14:00:00Z"}"#,
+                r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"已修复"}]},"timestamp":"2026-08-20T14:01:00Z"}"#,
+            ],
+        );
+
+        // 列表加载 = lazy：只出概要，绝不收集 messages
+        let summary = parse_native_session(&file, true).unwrap();
+        assert_eq!(summary.id, "sess-native");
+        assert_eq!(summary.title, "帮我看看这个 bug");
+        assert_eq!(summary.project, "x");
+        assert!(summary.messages.is_empty(), "lazy 列表概要不应包含消息");
+
+        // 点开会话 = lazy=false：才解析全部消息
+        let detail = parse_native_session(&file, false).unwrap();
+        assert_eq!(detail.messages.len(), 2, "详情才应解析全部消息");
+        assert_eq!(detail.messages[0].role, "user");
+        assert_eq!(detail.messages[1].role, "assistant");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
