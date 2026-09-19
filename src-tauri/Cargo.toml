@@ -31,10 +31,16 @@ log = { version = "0.4", features = ["std"] }
 dirs = "6"
 chrono = { version = "0.4", features = ["serde"] }
 axum = "0.8"
+# SSE 推送流（/api/events），tokio 流工具
+futures-util = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
 include_dir = "0.7"
-# hook 自动下载（GitHub latest release），轻量同步 HTTP 客户端
-ureq = "2"
+# server 访问密码哈希存储（Argon2id：内存难解、抗 GPU 爆破）
+argon2 = "0.5"
+# 仅为生成 Argon2 随机盐提供 OsRng（argon2 默认引入的 rand_core 关了 getrandom）
+rand_core = { version = "0.6", features = ["getrandom"] }
+# ccbuddy-server --set-password 的交互式密码输入（终端不回显）
+rpassword = "7"
 
 # 任务栏通知（overlay 角标 / FlashWindowEx），仅桌面端使用
 [target.'cfg(windows)'.dependencies]

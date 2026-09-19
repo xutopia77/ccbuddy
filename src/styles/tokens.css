@@ -5,54 +5,86 @@
  * naive-ui 主题（App.vue themeOverrides）与 token 保持同值，
  * 库组件与自定义视图视觉统一。
  *
+ * 配色：Midnight Coral（设计稿 03-final-dashboard 的 :root token）
+ *
  * 命名：语义分层
  *   bg-base     窗口最底层背景
  *   bg-surface  面板/列表背景
- *   bg-elevated 卡片/悬浮层/hover
+ *   bg-elevated 卡片/悬浮层
+ *   bg-hover    hover 态背景
  *   bg-code     代码块/命令块
  */
 
 :root {
   /* ---- 表面 ---- */
-  --bg-base: #0a0f16;
-  --bg-surface: #111823;
-  --bg-elevated: #1a2332;
-  --bg-hover: #212d3f;
-  --bg-code: #0d1420;
+  --bg-base: #090b0d;
+  --bg-surface: #151b23;
+  --bg-elevated: #1b232e;
+  --bg-hover: #232d3a;
+  --bg-code: #0b0e12;
+  /* 侧栏分组头底（比 surface 更深一档，区分列表分层） */
+  --bg-side: #0d1016;
 
   /* ---- 边框 ---- */
-  --border: #263445;
-  --border-strong: #35455c;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
 
   /* ---- 文本 ---- */
-  --text-1: #e2e8f0;
-  --text-2: #94a3b8;
-  --text-3: #64748b;
+  --text-1: #eff2f6;
+  --text-2: #bfcad8;
+  --text-3: #9dabbf;
 
   /* ---- 品牌色 ---- */
-  --accent: #3b82f6;
-  --accent-hover: #60a5fa;
-  --accent-soft: rgba(59, 130, 246, 0.15);
-  --accent-mute: #93c5fd;
+  --accent: #ffa063;
+  --accent-hover: #ffb387;
+  --accent-soft: rgba(255, 160, 99, 0.12);
+  /* 淡强调文字：用途全部为深底小号文字（命令/代码块、悬停箭头），
+     设计稿 dim #c96a44 在深底上对比不足，取 hover 档 #ffb387 保证可读 */
+  --accent-mute: #ffb387;
+  /* 品牌色之上的前景文字（日历选中态、实心品牌底） */
+  --on-accent: #1c0d08;
 
   /* ---- 语义色（会话状态 / 消息徽标共用） ---- */
-  --success: #10b981;
-  --success-soft: rgba(16, 185, 129, 0.15);
-  --warning: #f59e0b;
-  --warning-soft: rgba(245, 158, 11, 0.15);
-  --danger: #ef4444;
-  --danger-soft: rgba(239, 68, 68, 0.15);
-  --info: #38bdf8;
-  --info-soft: rgba(56, 189, 248, 0.15);
-  --muted: #6b7280;
-  --muted-soft: rgba(107, 114, 128, 0.15);
+  --success: #7fdcb0;
+  --success-soft: rgba(127, 220, 176, 0.13);
+  /* warning 与 accent 同值：Midnight Coral 中“需你出手”即品牌色 */
+  --warning: #ffa063;
+  --warning-soft: rgba(255, 160, 99, 0.12);
+  --danger: #ff6355;
+  --danger-soft: rgba(255, 99, 85, 0.13);
+  --info: #8fb7e8;
+  --info-soft: rgba(143, 183, 232, 0.13);
+  --muted: #9dabbf;
+  --muted-soft: rgba(157, 171, 191, 0.13);
   --think: #c084fc;
   --think-soft: rgba(192, 132, 252, 0.15);
 
+  /* ---- 用量系列色：统计卡图标 / 趋势折线 / 环形图共用一套，逐项同色 ----
+   * 深色表面 #151b23 上五项色相拉开；文字一律用文字色 token，颜色只落在
+   * 图标、色键、折线、扇区这些「标记」上（dataviz：色不染文字）。 */
+  --chart-total: #a855f7;    /* Token 总量（紫） */
+  --chart-requests: #2dd4bf; /* 请求数（青） */
+  --chart-input: #4da3ff;    /* 输入 Token（蓝） */
+  --chart-output: #42c970;   /* 输出 Token（绿） */
+  --chart-cache: #e8b34b;    /* 缓存命中（琥珀） */
+
+  /* ---- 活跃热力图色阶（GitHub 贡献图式，青绿单色 5 档：0 = 无数据）
+   * 0 档是中性灰底轨道，1..3 档为同色相加透明度，4 档取满色。 ---- */
+  --heat-0: rgba(148, 163, 184, 0.09);
+  --heat-1: rgba(45, 212, 191, 0.28);
+  --heat-2: rgba(45, 212, 191, 0.48);
+  --heat-3: rgba(45, 212, 191, 0.7);
+  --heat-4: #2dd4bf;
+
   /* ---- 圆角（统一圆角体系，废弃 VS Code 3px 直角） ---- */
-  --radius-lg: 10px; /* 卡片 / 聊天气泡 / 大面板 */
+  --radius-lg: 10px; /* 大面板 */
   --radius-md: 6px;  /* 按钮 / 输入框 / 折叠条 */
   --radius-sm: 4px;  /* 徽标 / 代码块 / 小标签 */
+  --radius-inset: 8px;  /* 卡内嵌套块（消息卡 / 展开详情，设计稿 --r-inset） */
+  --radius-card: 14px; /* 视图级大卡片 / user 气泡（双栏/三栏外框） */
+
+  /* ---- 阴影 ---- */
+  --shadow: 0 1px 3px rgba(5, 8, 13, 0.45);
 
   /* ---- 字体 ---- */
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;

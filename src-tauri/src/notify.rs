@@ -1,6 +1,6 @@
 //! 任务栏通知：紧急会话的未读角标 + 一次性任务栏闪烁（桌面端专用，随 `gui` feature 编译）。
 //!
-//! - Rust 侧后台任务每 2s 扫描事件流目录（复用 [`crate::state::urgent_session_ids`]），
+//! - Rust 侧后台任务每 2s 扫描事件流目录（复用 [`crate::events_mgr::urgent_session_ids`]），
 //!   筛出紧急会话（waiting_confirmation / waiting_input / error）；
 //! - 未读数 = 紧急会话 − "已读"集合：窗口失焦且有未读时设置任务栏角标
 //!   （Windows 用 ITaskbarList3::SetOverlayIcon 叠加红底数字，macOS 用 dock badge），
@@ -118,7 +118,7 @@ pub fn on_focus(app: &tauri::AppHandle) {
         update_badge(&window, &app.state::<NotifyState>(), None);
     }
     app.state::<NotifyState>()
-        .mark_all_read(crate::state::urgent_session_ids());
+        .mark_all_read(crate::events_mgr::urgent_session_ids());
 }
 
 /// 设置角标（值未变化时跳过平台调用）。

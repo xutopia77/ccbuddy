@@ -195,7 +195,7 @@ impl Log for Logger {
         }
         let line = format!(
             "{} [{}] {}: {}",
-            crate::rpc::now_ms(),
+            crate::proto::now_ms(),
             record.level().as_str(),
             record.target(),
             record.args()

@@ -12,6 +12,7 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     EventList: typeof import('./src/components/EventList.vue')['default']
+    LoginView: typeof import('./src/components/LoginView.vue')['default']
     NButton: typeof import('naive-ui')['NButton']
     NCard: typeof import('naive-ui')['NCard']
     NConfigProvider: typeof import('naive-ui')['NConfigProvider']
@@ -21,11 +22,19 @@ declare module 'vue' {
     NInputNumber: typeof import('naive-ui')['NInputNumber']
     NMessageProvider: typeof import('naive-ui')['NMessageProvider']
     NNotificationProvider: typeof import('naive-ui')['NNotificationProvider']
-    NSwitch: typeof import('naive-ui')['NSwitch']
+    NPagination: typeof import('naive-ui')['NPagination']
+    NPopconfirm: typeof import('naive-ui')['NPopconfirm']
+    NPopover: typeof import('naive-ui')['NPopover']
+    NSelect: typeof import('naive-ui')['NSelect']
     NTag: typeof import('naive-ui')['NTag']
+    NTooltip: typeof import('naive-ui')['NTooltip']
     SessionDetail: typeof import('./src/components/SessionDetail.vue')['default']
     SessionList: typeof import('./src/components/SessionList.vue')['default']
     SettingsPanel: typeof import('./src/components/SettingsPanel.vue')['default']
+    SplitDivider: typeof import('./src/components/SplitDivider.vue')['default']
     TitleBar: typeof import('./src/components/TitleBar.vue')['default']
+    UsageDonutChart: typeof import('./src/components/UsageDonutChart.vue')['default']
+    UsagePanel: typeof import('./src/components/UsagePanel.vue')['default']
+    UsageTrendChart: typeof import('./src/components/UsageTrendChart.vue')['default']
   }
 }

@@ -60,6 +60,7 @@ pub struct AppError {
 }
 
 impl AppError {
+    // trait 允许将任何实现了 Into<String> 的类型转换为 String，这样可以方便地传入不同类型的参数（如 &str、String 等）来构造 AppError。
     pub fn new(code: i32, status: impl Into<String>) -> Self {
         Self {
             code,

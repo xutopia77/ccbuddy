@@ -13,7 +13,7 @@ dist-ssr
 dist-release
 *.local
 
-# Tauri 构建产物 / 占位 hook 二进制
+# Tauri 构建产物 / 占位 hook 二进制 / 内嵌 hook 副本（embedded-hook，二进制不入库）
 src-tauri/target
 src-tauri/binaries
 
@@ -28,3 +28,4 @@ src-tauri/binaries
 *.sln
 *.sw?
 scripts/__pycache__/*
+tmp/*
