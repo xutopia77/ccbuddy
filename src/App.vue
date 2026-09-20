@@ -374,7 +374,7 @@ watch(
   (ok) => {
     if (ok === null) return; // 尚未探测：不动
     if (ok) {
-      // 推送优先：后端 watcher 检测到事件流变化时主动推（SSE / Tauri event），零轮询
+      // 推送优先：后端每 2s 取一次事件流主动推（SSE / Tauri event），前端零轮询
       unlistenEvents = onEvent<Session[]>("events_changed", applyEvents);
       // usage_changed 由 UsagePanel 消费数据，App 只借同一推送记录最近推送时间（tooltip 辅助）
       unlistenUsagePing = onEvent("usage_changed", () => (lastPushAt.value = Date.now()));

@@ -294,34 +294,22 @@ pub type UsageListenerGuard = crate::watch::ListenerGuard<UsageListener>;
 static USAGE_LISTENERS: crate::watch::ListenerRegistry<UsageListener> =
     crate::watch::ListenerRegistry::new();
 
-/// projects 目录指纹：递归一层（H-C2）——除各项目目录自身的名字与元数据外，
-/// 项目目录下的每一项（会话 `.jsonl`、`<session-id>/` 会话目录）也一并哈希，
-/// 因此子代理转录引起的会话目录元数据变化同样会触发推送。
-fn usage_fingerprint() -> u64 {
-    crate::watch::fingerprint_dir(&crate::claude::projects_dir(), 1)
-}
-
-/// 轮询周期：每轮重读配置，`set_config` 改了周期下一轮即生效（默认 30s）。
+/// 推送周期：每轮重读配置，`set_config` 改了周期下一轮即生效（默认 30s）。
 fn usage_period() -> std::time::Duration {
     let secs = crate::config::clamp_usage_refresh_secs(crate::config::load().usage_refresh_secs);
     std::time::Duration::from_secs(secs as u64)
 }
 
-/// 用量轮询器（周期来自配置，见 [`usage_period`]）。
+/// 用量推送器（周期来自配置，见 [`usage_period`]）。
 static WATCHER: crate::watch::PollingWatcher = crate::watch::PollingWatcher::new();
 
-/// 启动用量 watcher：指纹变化时增量解析（mtime + size 缓存只重读变化的文件）
-/// 并回调全部监听者。
+/// 启动用量推送：每 [`usage_period`] 取一次用量记录回调全部监听者。
 ///
-/// 首轮基准取「空指纹」：目录非空时启动后第一个周期就推一次，
-/// 前端首屏据此拿到数据，不必等第一次文件变化。幂等可重复调用。
+/// 无论 transcript 有没有变化都会推——前端「更新周期(秒)」是定时刷新语义，
+/// 只在文件变化时推会让卡片/趋势/热力图停在旧值。取数走 mtime + size 增量缓存
+/// （只重读变化的文件），静止轮次不会重复解析。幂等可重复调用。
 pub fn start_usage_watcher() {
-    WATCHER.start(
-        usage_period,
-        crate::watch::Baseline::Empty,
-        usage_fingerprint,
-        || USAGE_LISTENERS.notify(load_usage()),
-    );
+    WATCHER.start(usage_period, || USAGE_LISTENERS.notify(load_usage()));
 }
 
 /// 注册用量变更监听者（自动启动 watcher）。

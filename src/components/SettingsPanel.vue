@@ -186,7 +186,7 @@ import { changePassword, logout } from "../auth";
 // 版本取自 package.json（构建期注入）；官网为占位地址，待正式发布后替换。
 const APP_VERSION = __APP_VERSION__;
 const REPO_URL = "https://github.com/xutopia77/ccbuddy";
-const SITE_URL = "https://ccbuddy.dev";
+const SITE_URL = "https://xutopia.top/project/ccbuddy";
 
 const notification = useNotification();
 

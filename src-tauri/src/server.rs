@@ -39,7 +39,7 @@ struct AppState {
     assets: &'static Dir<'static>,
 }
 
-/// SSE 推送通道：watcher 检测到事件流变化 → 广播 RpcResponse 信封。
+/// SSE 推送通道：watcher 定时取数（事件流 2s / 用量按配置）→ 广播 RpcResponse 信封。
 /// tokio broadcast 是 MPMC：每个 SSE 连接持有一个 receiver，互不抢消息。
 fn sse_channel() -> &'static tokio::sync::broadcast::Sender<crate::proto::RpcResponse> {
     static TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<crate::proto::RpcResponse>> =
@@ -107,7 +107,7 @@ pub async fn start(addr: &str, assets: &'static Dir<'static>) {
             return;
         }
     };
-    // 启动事件流 watcher（SSE 推送源；幂等，重复调用无副作用）
+    // 启动推送（事件流 + 用量，SSE 推送源；幂等，重复调用无副作用）
     let sse_tx = sse_channel();
     let _ = sse_tx;
     log::info!("HTTP 服务已启动: http://{addr}");
@@ -257,9 +257,10 @@ async fn rpc_api(Json(req): Json<RpcRequest>) -> Json<RpcResponse> {
     Json(core::dispatch(&ctx, &req.cmd, req.data))
 }
 
-/// SSE 推送端点（`GET /api/events`）：事件流变化时推送 RpcResponse 信封。
+/// SSE 推送端点（`GET /api/events`）：后端定时取数推送 RpcResponse 信封。
 ///
-/// 连接建立时先推一次全量列表（等价轮询的首次 load），之后只在有变化时推。
+/// 连接建立时先推一次全量列表（等价轮询的首次 load），之后事件流每 2s 推一次、
+/// 用量按「更新周期(秒)」配置推一次（信封的 cmd 区分两种数据）。
 /// 信封格式与 `/api/rpc` 响应一致：`{ time, cmd, code, status, data }`，
 /// data 为会话列表（与 get_events 命令的返回完全相同）。
 async fn sse_events(headers: HeaderMap) -> Sse<impl Stream<Item = Result<SseEvent, std::convert::Infallible>>> {

@@ -1109,24 +1109,18 @@ pub type ListenerGuard = crate::watch::ListenerGuard<ChangeListener>;
 static CHANGE_LISTENERS: crate::watch::ListenerRegistry<ChangeListener> =
     crate::watch::ListenerRegistry::new();
 
-/// 事件目录指纹：events 目录是扁平的（只有 `event-<id>.jsonl`），不递归。
-fn dir_fingerprint() -> u64 {
-    crate::watch::fingerprint_dir(&events_dir(), 0)
-}
+/// 事件流推送周期：2 秒（前端事件流视图的定时刷新节奏）。
+const PUSH_PERIOD: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// 事件目录轮询器：1s 一个周期（比前端 2s 轮询更细，变化感知更快）。
+/// 事件流推送器：每 [`PUSH_PERIOD`] 取一次数据推给监听者。
 static WATCHER: crate::watch::PollingWatcher = crate::watch::PollingWatcher::new();
 
-/// 启动事件目录 watcher：指纹变化（有新事件写入）时回调全部监听者。
+/// 启动事件流推送：每 [`PUSH_PERIOD`] 回调一次全部监听者。
 ///
-/// 服务端与桌面端（任务栏角标）共享同一 watcher，同一批数据只解析一次。
+/// 服务端（SSE）与桌面端（Tauri event）共享同一推送线程，同一批数据只解析一次；
+/// 取数走 mtime 增量缓存，没有新事件时不会重复解析。
 pub fn start_watcher() {
-    WATCHER.start(
-        || std::time::Duration::from_secs(1),
-        crate::watch::Baseline::Current,
-        dir_fingerprint,
-        || CHANGE_LISTENERS.notify(collect_events()),
-    );
+    WATCHER.start(|| PUSH_PERIOD, || CHANGE_LISTENERS.notify(collect_events()));
 }
 
 /// 注册一个变更监听者，事件流变化时收到解析好的会话列表。

@@ -327,26 +327,27 @@ mod gui {
                 // 后台预热量用记录缓存，避免首次打开用量视图时集中解析卡顿
                 crate::usage_mgr::prewarm_async();
 
-                // 事件流变更推送：watcher 检测到新事件时 emit 给前端
+                // 事件流推送：watcher 每 2s 取数 emit 给前端
                 // （信封 = RpcResponse，与 ccbuddy-server 的 SSE 推送格式一致）
+                //
+                // 用 AppHandle 广播而非绑定主窗口：窗口尚未创建/被重建时订阅依然注册
+                // 成功，不会出现「订阅根本没挂上 → 界面永远收不到推送」的静默失败。
                 use tauri::Emitter;
-                if let Some(window) = app.get_webview_window("main") {
-                    let win = window.clone();
-                    let guard = crate::events_mgr::subscribe(Box::new(move |sessions| {
-                        let resp = crate::proto::ok("events_changed", serde_json::json!(sessions));
-                        let _ = win.emit("events_changed", resp);
-                    }));
-                    // guard 故意 forget：与 AppHandle 同生命周期（应用常驻，监听不注销）
-                    std::mem::forget(guard);
+                let push_handle = app.handle().clone();
+                let events_handle = push_handle.clone();
+                let guard = crate::events_mgr::subscribe(Box::new(move |sessions| {
+                    let resp = crate::proto::ok("events_changed", serde_json::json!(sessions));
+                    let _ = events_handle.emit("events_changed", resp);
+                }));
+                // guard 故意 forget：与应用同生命周期（应用常驻，监听不注销）
+                std::mem::forget(guard);
 
-                    // 用量变更推送：同一信封协议，cmd = usage_changed
-                    let win2 = window.clone();
-                    let guard2 = crate::usage_mgr::subscribe_usage(Box::new(move |records| {
-                        let resp = crate::proto::ok("usage_changed", serde_json::json!(records));
-                        let _ = win2.emit("usage_changed", resp);
-                    }));
-                    std::mem::forget(guard2);
-                }
+                // 用量推送：同一信封协议，cmd = usage_changed
+                let guard2 = crate::usage_mgr::subscribe_usage(Box::new(move |records| {
+                    let resp = crate::proto::ok("usage_changed", serde_json::json!(records));
+                    let _ = push_handle.emit("usage_changed", resp);
+                }));
+                std::mem::forget(guard2);
 
                 // 后台每 2s 轮询事件流目录（不依赖前端页面），驱动任务栏角标与闪烁
                 let handle = app.handle().clone();

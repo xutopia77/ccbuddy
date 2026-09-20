@@ -276,7 +276,7 @@ watch(rangeSelection, (v) => {
   }
 });
 
-// ---- 更新周期（秒）：后端 watcher 按此间隔检查 transcript 并推送 usage_changed ----
+// ---- 更新周期（秒）：后端按此间隔取一次用量并推送 usage_changed（定时刷新，不依赖文件变化）----
 const refreshSecs = ref<number | null>(30);
 
 // ---- 筛选 ----
@@ -313,8 +313,10 @@ async function loadUsage() {
 /** 应用记录到界面（初始加载与 usage_changed 推送共用）。 */
 function applyUsage(usage: UsageRecord[]) {
   records.value = usage;
-  // 筛选可能因新数据越界，回第 1 页
-  page.value = 1;
+  // 定时推送是常态（见 refreshSecs）：只在当前页越界时才收敛，不能无条件回第 1 页，
+  // 否则每轮推送都会把正在翻页的用户拽回去。totalPages 依赖 records，
+  // 上面赋值后读取到的就是新值。
+  if (page.value > totalPages.value) page.value = totalPages.value;
 }
 
 /** 拉取会话标题映射（失败不阻塞表格）。 */
@@ -327,7 +329,7 @@ async function loadTitles() {
   sessionTitles.value = titles;
 }
 
-// ---- 用量推送订阅：后端 watcher 检测到 transcript 变化时主动推送 ----
+// ---- 用量推送订阅：后端按「更新周期」定时主动推送 ----
 // （SSE / Tauri event 同一信封协议，与事件流 events_changed 同构）
 const unlistenUsage = onEvent<UsageRecord[]>("usage_changed", (usage) => {
   applyUsage(usage);
@@ -449,7 +451,7 @@ const statsRecords = computed(() => {
   });
 });
 
-/** 当前页记录：页码越界（筛选后）时钳回第 1 页由 watcher 处理，这里再兜底。 */
+/** 当前页记录：页码越界（筛选后）由 [`applyUsage`] 收敛，这里只做切片。 */
 const pageRecords = computed(() => {
   const start = (page.value - 1) * PAGE_SIZE;
   return displayRecords.value.slice(start, start + PAGE_SIZE);
